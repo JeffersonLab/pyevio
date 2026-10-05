@@ -6,6 +6,7 @@ from datetime import datetime
 
 from pyevio.file_header import FileHeader
 from pyevio.record import Record
+from pyevio.record_header import RecordHeader
 from pyevio.event import Event
 
 
@@ -63,7 +64,7 @@ class EvioFile:
                 self.mm.close()
             if hasattr(self, 'file') and self.file and not self.file.closed:
                 self.file.close()
-        except (ValueError, AttributeError):
+        except (ValueError, AttributeError, BufferError):
             # Ignore errors during cleanup
             pass
 
@@ -96,8 +97,10 @@ class EvioFile:
                 # Move to next record
                 offset += record.size
 
-                # Stop if this was the last record
-                if record.header.is_last_record:
+                # Stop if this was the last record. Some CODA writers set the
+                # last-record bit on every record, so keep going if another
+                # record header follows.
+                if record.header.is_last_record and not self._is_record_at(offset):
                     break
 
             except Exception as e:
@@ -106,6 +109,13 @@ class EvioFile:
                 raise
 
         return record_offsets
+
+    def _is_record_at(self, offset: int) -> bool:
+        """Check whether a record header (magic word in word 7) starts at offset."""
+        if offset + RecordHeader.HEADER_SIZE > self.file_size:
+            return False
+        magic = struct.unpack(self.header.endian + 'I', self.mm[offset + 28:offset + 32])[0]
+        return magic == RecordHeader.MAGIC_NUMBER
 
     @property
     def record_count(self) -> int:
