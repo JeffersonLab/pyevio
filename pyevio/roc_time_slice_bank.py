@@ -279,7 +279,7 @@ class RocTimeSliceBank(Bank):
     # Tag value for ROC Time Slice Banks
     TAG = 0xFF30
 
-    def __init__(self, mm: mmap.mmap, offset: int, endian: str = '<'):
+    def __init__(self, mm: mmap.mmap, offset: int, endian: str = '<', limit: Optional[int] = None):
         """
         Initialize a RocTimeSliceBank parser.
 
@@ -287,8 +287,9 @@ class RocTimeSliceBank(Bank):
             mm: Memory-mapped buffer
             offset: Byte offset where the bank starts
             endian: Endianness ('<' for little endian, '>' for big endian)
+            limit: Byte offset the bank must not reach past (see Bank)
         """
-        super().__init__(mm, offset, endian)
+        super().__init__(mm, offset, endian, limit)
 
         # Validate ROC Time Slice Bank
         if self.data_type != 0x10:

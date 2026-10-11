@@ -1,7 +1,9 @@
 import mmap
 import struct
 
-from pyevio.bank import Bank
+import pytest
+
+from pyevio.bank import Bank, Segment, TagSegment
 
 
 class MockMemoryMap:
@@ -39,6 +41,18 @@ def evio_bank(tag, data_type, num, payload, endian='<'):
     header = struct.pack(f"{endian}II", length,
                          ((tag & 0xFFFF) << 16) | ((data_type & 0xFF) << 8) | (num & 0xFF))
     return header + payload
+
+
+def evio_segment(tag, data_type, payload, endian='<'):
+    """Build a segment: one header word tag (8) | pad (2) | type (6) | length (16), then the payload."""
+    assert len(payload) % 4 == 0
+    return struct.pack(f"{endian}I", ((tag & 0xFF) << 24) | ((data_type & 0x3F) << 16) | (len(payload) // 4)) + payload
+
+
+def evio_tagsegment(tag, data_type, payload, endian='<'):
+    """Build a tagsegment: one header word tag (12) | type (4) | length (16), then the payload."""
+    assert len(payload) % 4 == 0
+    return struct.pack(f"{endian}I", ((tag & 0xFFF) << 20) | ((data_type & 0xF) << 16) | (len(payload) // 4)) + payload
 
 
 def print_hex_dump(data, title=None):
@@ -261,6 +275,93 @@ class TestBankScanning:
             ]
             assert len(children[1].errors) == 1 and "0x50" in children[1].errors[0]
             assert all(c.tag != 0x000F for c in children + roc_children)
+
+    def test_sro_event_segments_are_one_word_structures(self):
+        """The SIB of an SRO stream frame holds segments (1-word headers), typed by the parent (F45).
+
+        Layout as the hardware writes it: event 0xFF60 (bank of banks) ->
+        SIB 0xFF31 (bank of segments: TSS 0x32 with frame, ts_lo, ts_hi; AIS
+        0x42 with 24 identical words) + ROC bank (bank of banks: stream-info
+        bank 0xFF30 of segments 0x31 and 0x41 (ushort16 port map), then
+        payload banks of type 0x00, an empty one with num 1).
+        """
+        tss = evio_segment(0x32, Bank.TYPE_UINT32, struct.pack("<III", 7, 0x70000, 0))
+        ais = evio_segment(0x42, Bank.TYPE_UINT32, struct.pack("<24I", *([0x00070021] * 24)))
+        sib = evio_bank(0xFF31, Bank.TYPE_SEGMENT2, 0, tss + ais)
+        roc_tss = evio_segment(0x31, Bank.TYPE_UINT32, struct.pack("<III", 7, 0x70000, 0))
+        port_map = evio_segment(0x41, Bank.TYPE_UINT16, struct.pack("<I", (3 << 16) | 1))
+        stream_info = evio_bank(0xFF30, Bank.TYPE_SEGMENT2, 0x21, roc_tss + port_map)
+        payload_1 = evio_bank(1, Bank.TYPE_UNKNOWN32, 0, struct.pack("<II", 0x1234, 0x5678))
+        payload_3 = evio_bank(3, Bank.TYPE_UNKNOWN32, 1, b"")
+        roc = evio_bank(7, Bank.TYPE_BANK2, 0x21, stream_info + payload_1 + payload_3)
+        event = evio_bank(0xFF60, Bank.TYPE_BANK2, 0, sib + roc)
+
+        root = Bank(MockMemoryMap(event), 0, '<')
+        sib_bank, roc_bank = root.get_children()
+        assert root.errors == []
+        assert (sib_bank.tag, sib_bank.data_type, sib_bank.length) == (0xFF31, 0x20, 30)
+
+        segments = sib_bank.get_children()
+        assert sib_bank.errors == []
+        assert all(isinstance(s, Segment) for s in segments)
+        assert [(s.offset, s.tag, s.data_type, s.length, s.size, s.num) for s in segments] == [
+            (sib_bank.data_offset, 0x32, 0x01, 3, 16, None),
+            (sib_bank.data_offset + 16, 0x42, 0x01, 24, 100, None),
+        ]
+        assert segments[0].to_numpy().tolist() == [7, 0x70000, 0]
+        assert len(segments[1].to_numpy()) == 24 and segments[1].get_children() == []
+
+        info, p1, p3 = roc_bank.get_children()
+        assert roc_bank.errors == []
+        assert isinstance(info, Bank) and info.tag == 0xFF30
+        roc_segments = info.get_children()
+        assert [(s.tag, s.data_type, s.length) for s in roc_segments] == [(0x31, 0x01, 3), (0x41, 0x05, 1)]
+        assert roc_segments[1].to_numpy().tolist() == [1, 3]
+        assert (p1.tag, p1.num, p1.to_numpy().tolist()) == (1, 0, [0x1234, 0x5678])
+        assert (p3.tag, p3.num, p3.length, p3.data_length) == (3, 1, 1, 0)
+
+    def test_tagsegment_container_children(self):
+        """A bank of tagsegments (type 0xc) holds 1-word-header children with 12-bit tags."""
+        first = evio_tagsegment(0xABC, Bank.TYPE_UINT32, struct.pack("<II", 5, 6))
+        second = evio_tagsegment(0x001, Bank.TYPE_INT32, struct.pack("<i", -1))
+        container = evio_bank(0x0100, Bank.TYPE_TAGSEGMENT, 0, first + second)
+
+        bank = Bank(MockMemoryMap(container), 0, '<')
+        children = bank.get_children()
+        assert bank.errors == []
+        assert all(isinstance(c, TagSegment) for c in children)
+        assert [(c.offset, c.tag, c.data_type, c.length) for c in children] == [(8, 0xABC, 0x1, 2), (20, 0x001, 0xb, 1)]
+        assert children[0].to_numpy().tolist() == [5, 6]
+        assert children[1].to_numpy().tolist() == [-1]
+
+    def test_segment_walk_stops_at_overrun(self):
+        """A segment whose length runs past its parent stops the walk with an error."""
+        good = evio_segment(0x32, Bank.TYPE_UINT32, struct.pack("<I", 1))
+        bad = struct.pack("<I", (0x42 << 24) | (0x01 << 16) | 500)
+        container = evio_bank(0xFF31, Bank.TYPE_SEGMENT2, 0, good + bad + bytes(8))
+
+        bank = Bank(MockMemoryMap(container), 0, '<')
+        children = bank.get_children()
+        assert [(c.tag, c.length) for c in children] == [(0x32, 1)]
+        assert len(bank.errors) == 1 and "Segment at 0x10 declares 500 words" in bank.errors[0]
+
+    def test_bank_clamped_to_limit(self):
+        """A bank whose length passes the given limit is clamped there and says so (F5)."""
+        bank_bytes = evio_bank(0x0101, Bank.TYPE_UINT32, 0x01, struct.pack("<III", 1, 2, 3))
+        bank = Bank(MockMemoryMap(bank_bytes), 0, '<', limit=16)
+        assert bank.length == 4
+        assert bank.end_offset == 16 and bank.size == 16 and bank.data_length == 8
+        assert bank.to_numpy().tolist() == [1, 2]
+        assert len(bank.errors) == 1 and "past its limit 0x10" in bank.errors[0]
+
+        # Without a limit the buffer end bounds the bank.
+        short = Bank(MockMemoryMap(bank_bytes[:12]), 0, '<')
+        assert short.end_offset == 12 and short.to_numpy().tolist() == [1]
+        assert len(short.errors) == 1
+
+        # A buffer with no room for the header is refused before any read.
+        with pytest.raises(ValueError, match="needs 8 bytes"):
+            Bank(MockMemoryMap(bank_bytes[:6]), 0, '<')
 
     def test_bank_length_counts_words_that_follow(self):
         """A leaf bank with three uint32 payload words occupies five words and yields all three."""

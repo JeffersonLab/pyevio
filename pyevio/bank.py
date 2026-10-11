@@ -28,6 +28,14 @@ class Bank(BankHeader):
     - Word 2: tag (16 bits) | pad (2 bits) | type (6 bits) | num (8 bits)
 
     Banks can contain data or other banks, depending on the data_type.
+
+    Every length word counts the words that follow it, so a structure with
+    length N occupies N + 1 words. Children are typed by the parent's data
+    type: a bank of banks (0xe/0x10) holds ``Bank`` children, a bank of
+    segments (0xd/0x20) holds ``Segment`` children (1-word header) and a bank
+    of tagsegments (0xc) holds ``TagSegment`` children (1-word header).
+    Reading a segment with the 2-word bank header takes its first payload
+    word as a bank header.
     """
 
     # Data type constants
@@ -65,44 +73,60 @@ class Bank(BankHeader):
         TYPE_INT32: np.int32
     }
 
-    def __init__(self, mm: mmap.mmap, offset: int, endian: str = '<'):
+    # Header words of this structure kind; subclasses with a 1-word header override it.
+    HEADER_WORDS = 2
+    STRUCTURE_NAME = "Bank"
+
+    def __init__(self, mm: mmap.mmap, offset: int, endian: str = '<', limit: Optional[int] = None):
         """
         Initialize a Bank object.
 
         Args:
-            mm: Memory-mapped file containing the bank
-            offset: Byte offset in the file where the bank starts
+            mm: Memory-mapped file (or bytes buffer) containing the bank
+            offset: Byte offset in the buffer where the bank starts
             endian: Endianness ('<' for little endian, '>' for big endian)
+            limit: Byte offset this bank must not reach past (the end of its
+                parent, event or buffer). Default: the end of the buffer.
+                A declared length past the limit is recorded in ``errors`` and
+                the bank is clamped to the limit, so no read runs past it.
         """
         super().__init__()
         self.mm = mm
         self.offset = offset
         self.endian = endian
 
-        # Parse bank header
+        # Why a child walk stopped early or this bank was clamped (short
+        # strings with offsets); empty when every length fit.
+        self.errors: List[str] = []
+
+        self.header_size = self.HEADER_WORDS * 4
+        if offset < 0 or offset + self.header_size > len(mm):
+            raise ValueError(f"{self.STRUCTURE_NAME} header at 0x{offset:X} needs {self.header_size} bytes, "
+                             f"buffer ends at 0x{len(mm):X}")
         self._parse_header()
 
-        # The length word counts the words that follow it, so a bank with
-        # length N occupies N + 1 words. Counting the length word itself
-        # drops the last payload word of every leaf.
-        self.header_size = 8  # 2 words * 4 bytes
+        # The length word counts the words that follow it, so a structure with
+        # length N occupies N + 1 words. Counting the length word itself drops
+        # the last payload word of every leaf.
         self.data_offset = self.offset + self.header_size
         self.size = (self.length + 1) * 4
-        self.data_length = max(0, self.size - self.header_size)
-
-        # End offset for this bank
         self.end_offset = self.offset + self.size
+
+        if limit is None:
+            limit = len(mm)
+        if self.end_offset > limit:
+            self.errors.append(f"{self.STRUCTURE_NAME} at 0x{self.offset:X} declares {self.length} words, "
+                               f"ends at 0x{self.end_offset:X} past its limit 0x{limit:X}")
+            self.end_offset = limit
+            self.size = max(0, limit - self.offset)
+
+        self.data_length = max(0, self.end_offset - self.data_offset)
 
         # Child banks (will be parsed on demand)
         self._children = None
 
-        # Why a child walk stopped early (short strings with offsets); empty when
-        # every child length fit inside this bank.
-        self.errors: List[str] = []
-
     def _parse_header(self):
-        """Parse the bank header from the buffer."""
-        # Parse 2-word header
+        """Parse the 2-word bank header from the buffer."""
         self.length = struct.unpack(self.endian + 'I', self.mm[self.offset:self.offset+4])[0]
         bank_info = struct.unpack(self.endian + 'I', self.mm[self.offset+4:self.offset+8])[0]
 
@@ -123,7 +147,12 @@ class Bank(BankHeader):
                 self.type_name = "PhysicsEvent"
 
     @classmethod
-    def from_buffer(cls, buffer: mmap.mmap, offset: int, endian: str = '<') -> 'Bank':
+    def read_length(cls, mm, offset: int, endian: str) -> int:
+        """The length field (words that follow the length word) of the structure at offset."""
+        return struct.unpack(endian + 'I', mm[offset:offset + 4])[0]
+
+    @classmethod
+    def from_buffer(cls, buffer: mmap.mmap, offset: int, endian: str = '<', limit: Optional[int] = None) -> 'Bank':
         """
         Create a Bank object from a memory-mapped buffer.
 
@@ -131,11 +160,12 @@ class Bank(BankHeader):
             buffer: Memory-mapped buffer containing the bank
             offset: Byte offset in the buffer where the bank starts
             endian: Endianness ('<' for little endian, '>' for big endian)
+            limit: Byte offset the bank must not reach past (see ``__init__``)
 
         Returns:
             Bank object
         """
-        return cls(buffer, offset, endian)
+        return cls(buffer, offset, endian, limit)
 
     def is_container(self) -> bool:
         """
@@ -144,7 +174,18 @@ class Bank(BankHeader):
         Returns:
             True if this bank contains other banks, False otherwise
         """
-        return self.data_type in (self.TYPE_BANK, self.TYPE_BANK2, self.TYPE_SEGMENT, self.TYPE_SEGMENT2)
+        return self.data_type in (self.TYPE_BANK, self.TYPE_BANK2, self.TYPE_SEGMENT, self.TYPE_SEGMENT2,
+                                  self.TYPE_TAGSEGMENT)
+
+    def child_class(self) -> Optional[type]:
+        """The structure class of this container's children, or None for a leaf."""
+        if self.data_type in (self.TYPE_BANK, self.TYPE_BANK2):
+            return Bank
+        if self.data_type in (self.TYPE_SEGMENT, self.TYPE_SEGMENT2):
+            return Segment
+        if self.data_type == self.TYPE_TAGSEGMENT:
+            return TagSegment
+        return None
 
     def get_children(self) -> List['Bank']:
         """
@@ -162,27 +203,29 @@ class Bank(BankHeader):
             return self._children
 
         self._children = []
+        child_class = self.child_class()
 
         # Walk the children by their length words. Every length is checked
         # against this bank's end before it is trusted: a child that has no
-        # room for its two header words, declares length 0 (no room for its
-        # second header word) or runs past the parent is corrupt data. The
-        # walk stops there, keeps the children found so far and records why.
+        # room for its header words, declares length 0 with a 2-word header
+        # (no room for the second header word) or runs past the parent is
+        # corrupt data. The walk stops there, keeps the children found so far
+        # and records why.
         current_offset = self.data_offset
         while current_offset < self.end_offset:
-            if current_offset + self.header_size > self.end_offset:
-                self.errors.append(f"bank header at 0x{current_offset:X} needs 8 bytes, "
-                                   f"parent ends at 0x{self.end_offset:X}")
+            if current_offset + child_class.HEADER_WORDS * 4 > self.end_offset:
+                self.errors.append(f"{child_class.STRUCTURE_NAME} header at 0x{current_offset:X} needs "
+                                   f"{child_class.HEADER_WORDS * 4} bytes, parent ends at 0x{self.end_offset:X}")
                 break
 
-            child_length = struct.unpack(self.endian + 'I', self.mm[current_offset:current_offset + 4])[0]
+            child_length = child_class.read_length(self.mm, current_offset, self.endian)
             child_end = current_offset + (child_length + 1) * 4
-            if child_length == 0 or child_end > self.end_offset:
-                self.errors.append(f"bank at 0x{current_offset:X} declares {child_length} words, "
+            if child_length + 1 < child_class.HEADER_WORDS or child_end > self.end_offset:
+                self.errors.append(f"{child_class.STRUCTURE_NAME} at 0x{current_offset:X} declares {child_length} words, "
                                    f"ends at 0x{child_end:X}, parent ends at 0x{self.end_offset:X}")
                 break
 
-            self._children.append(Bank.from_buffer(self.mm, current_offset, self.endian))
+            self._children.append(child_class(self.mm, current_offset, self.endian, self.end_offset))
             current_offset = child_end
 
         return self._children
@@ -217,7 +260,7 @@ class Bank(BankHeader):
         # Create NumPy array from buffer
         return np.frombuffer(
             self.mm[self.data_offset:self.data_offset + (num_elements * element_size)],
-            dtype=dtype
+            dtype=np.dtype(dtype).newbyteorder(self.endian)
         )
 
     def to_string(self) -> Optional[str]:
@@ -261,7 +304,7 @@ class Bank(BankHeader):
 
     def __str__(self) -> str:
         """Return string representation of the bank header."""
-        return f"""Bank (0x{self.tag:04x}, {self.type_name}):
+        return f"""{self.STRUCTURE_NAME} (0x{self.tag:04x}, {self.type_name}):
   Offset:    0x{self.offset:08x}
   Length:    {self.length} words ({self.size} bytes with the length word)
   Tag:       0x{self.tag:04x}
@@ -271,4 +314,49 @@ class Bank(BankHeader):
 
     def __repr__(self) -> str:
         """Return a string representation for debugging."""
-        return f"Bank(offset=0x{self.offset:X}, tag=0x{self.tag:04X}, type=0x{self.data_type:02X})"
+        return f"{self.STRUCTURE_NAME}(offset=0x{self.offset:X}, tag=0x{self.tag:04X}, type=0x{self.data_type:02X})"
+
+
+class Segment(Bank):
+    """A segment: one header word ``tag (8) | pad (2) | type (6) | length (16)``, no num.
+
+    Children of a bank of segments (data type 0xd/0x20). Shares every
+    accessor with ``Bank``; ``num`` is None.
+    """
+
+    HEADER_WORDS = 1
+    STRUCTURE_NAME = "Segment"
+
+    def _parse_header(self):
+        header = struct.unpack(self.endian + 'I', self.mm[self.offset:self.offset + 4])[0]
+        self.tag = (header >> 24) & 0xFF
+        self.pad = (header >> 22) & 0x3
+        self.data_type = (header >> 16) & 0x3F
+        self.length = header & 0xFFFF
+        self.num = None
+
+    @classmethod
+    def read_length(cls, mm, offset: int, endian: str) -> int:
+        return struct.unpack(endian + 'I', mm[offset:offset + 4])[0] & 0xFFFF
+
+
+class TagSegment(Bank):
+    """A tagsegment: one header word ``tag (12) | type (4) | length (16)``, no pad, no num.
+
+    Children of a bank of tagsegments (data type 0xc).
+    """
+
+    HEADER_WORDS = 1
+    STRUCTURE_NAME = "TagSegment"
+
+    def _parse_header(self):
+        header = struct.unpack(self.endian + 'I', self.mm[self.offset:self.offset + 4])[0]
+        self.tag = (header >> 20) & 0xFFF
+        self.pad = 0
+        self.data_type = (header >> 16) & 0xF
+        self.length = header & 0xFFFF
+        self.num = None
+
+    @classmethod
+    def read_length(cls, mm, offset: int, endian: str) -> int:
+        return struct.unpack(endian + 'I', mm[offset:offset + 4])[0] & 0xFFFF
