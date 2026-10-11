@@ -75,14 +75,14 @@ def decode(path):
                  "n_hits": frames["n_hits"].astype(np.uint32), "hit_offset": offsets.astype(np.uint64)}
     stats = {"records": record_count, "frames": len(frames), "hits": stream_hits.n_hits,
              "skipped_events": stream_hits.n_other_events + out_of_bounds, "out_of_order": out_of_order,
-             "payload_words": stream_hits.n_payload_words, "empty_payload_banks": stream_hits.n_empty_payload_banks,
-             "decode_errors": stream_hits.errors}
+             "payload_words": stream_hits.n_payload_words, "non_fadc_words": stream_hits.non_fadc_words,
+             "empty_payload_banks": stream_hits.n_empty_payload_banks, "decode_errors": stream_hits.errors}
     return hits, frame_tab, stats, stream_hits
 
 
 def validate(stream_hits, frames):
     """Self-consistency checks; raises ValueError on failure and returns the frame checks."""
-    stream_hits.validate()  # decode errors, hit words with bit 31 set, hit count vs payload words
+    stream_hits.validate()  # decode errors, hit words with bit 31 set, hits + non-fADC words vs payload words
     if int(frames["n_hits"].sum()) != stream_hits.n_hits:
         raise ValueError("per-frame hit counts do not add up")
     frame_numbers = frames["frame"]
