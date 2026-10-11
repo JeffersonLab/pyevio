@@ -80,7 +80,8 @@ def decode(path):
     stats = {"records": record_count, "frames": len(frames), "hits": stream_hits.n_hits,
              "skipped_events": stream_hits.n_other_events + out_of_bounds, "out_of_order": out_of_order,
              "payload_words": stream_hits.n_payload_words, "non_fadc_words": stream_hits.non_fadc_words,
-             "empty_payload_banks": stream_hits.n_empty_payload_banks, "decode_errors": stream_hits.errors}
+             "empty_payload_banks": stream_hits.n_empty_payload_banks, "decode_errors": stream_hits.errors,
+             "decode_warnings": stream_hits.warnings}
     return hits, frame_tab, stats, stream_hits
 
 
@@ -110,6 +111,8 @@ def convert(path, out_dir, force=False):
     t0 = time.time()
     hits, frames, stats, stream_hits = decode(path)
     checks = validate(stream_hits, frames)
+    for message in stream_hits.warning_messages:  # malformed SIB segments; no hit depends on them
+        print(f"warn  {path.name}: {message}", file=sys.stderr)
     meta = {"source_file": path.name, "source_bytes": str(path.stat().st_size), "decoder_version": DECODER_VERSION,
             "hit_format": HIT_FORMAT, **{k: str(v) for k, v in {**stats, **checks}.items()}}
     out_dir.mkdir(parents=True, exist_ok=True)

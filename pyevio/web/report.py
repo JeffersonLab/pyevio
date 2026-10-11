@@ -86,6 +86,8 @@ def file_checks(evio_file: EvioFile, records: dict, stats: StreamStats) -> list:
         row("timestamp-step outliers", "warn" if checks.dts_outliers else "ok", checks.dts_outliers,
             f"median step {checks.frame_period_ticks:.0f} ticks"),
         row("decode errors", "error" if stats.errors else "ok", stats.errors, stats.error_messages[0] if stats.error_messages else ""),
+        row("decode warnings", "warn" if stats.warnings else "ok", stats.warnings,
+            stats.warning_messages[0] if stats.warning_messages else ""),
         row("flag words", "warn" if stats.n_flag_words else "ok", stats.n_flag_words, "hit words with bit 31 set"),
         row("unmapped payload banks", "warn" if stats.n_unmapped_payload_banks else "ok", stats.n_unmapped_payload_banks,
             "ports absent from the 0x41 payload map, decoded as fADC250"),

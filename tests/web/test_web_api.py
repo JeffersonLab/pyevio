@@ -33,6 +33,8 @@ def test_open_progress_summary_match_direct_stats(client, served_root):
                                   "mean_size": summary["records"]["mean_size"]}
     checks = {row["name"]: row for row in summary["checks"]}
     assert checks["missing frames"]["status"] == "warn" and checks["decode errors"]["status"] == "ok"
+    assert checks["decode warnings"] == {"name": "decode warnings", "status": "ok", "value": 0, "detail": ""}
+    assert totals["warnings"] == 0
     # F15: every synthetic frame's AIS repeats one entry, as the SRO hardware writes it
     assert totals["frames_with_ais"] == totals["frames_with_degenerate_ais"] == 12
     assert checks["AIS entries identical"]["status"] == "info" and checks["AIS entries identical"]["value"] == 12

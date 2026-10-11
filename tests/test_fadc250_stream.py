@@ -170,16 +170,31 @@ def test_ais_entries_are_counted_identical_and_distinct(endian):
     assert fs.ais_degenerate_mask(hits.frames).tolist() == [True, False, False, False]
 
 
-def test_ais_segment_past_sib_end_is_an_error_and_keeps_the_hits():
+def test_ais_segment_past_sib_end_is_a_warning_and_keeps_the_hits():
+    """A malformed segment after the TSS touches no hit: a warning, not an error, and validate() passes."""
     words = one_crate_frame()
     ais_header_i = 4 + 3 + 1  # SIB length and header, then the 4-word TSS segment
     assert (words[ais_header_i] >> 24) == fs.SIB_AIS_SEGMENT_TAG
     words[ais_header_i] = (words[ais_header_i] & 0xFFFF0000) | 500
 
     frame = fs.decode_frame(to_words(words, "<"))
-    assert frame.errors == 1 and "SIB segment length 500" in frame.error_messages[0]
+    assert frame.errors == 0 and frame.warnings == 1 and "SIB segment length 500" in frame.warning_messages[0]
     assert (frame.n_ais_entries, frame.n_ais_distinct) == (0, 0)
     assert frame.n_hits == 6 and frame.n_roc_banks == 2  # the ROC walk starts at the SIB end, untouched by the AIS
+    hits = fs.decode_frames([to_words(words, "<")])
+    hits.validate()
+    assert hits.warnings == 1 and hits.frames["warnings"].tolist() == [1] and hits.frames["errors"].tolist() == [0]
+
+
+def test_ais_segment_without_entries_is_a_warning():
+    """An AIS header with length 0 is present but lists nothing: (0, 0) like a missing one, plus a warning."""
+    rocs = [roc_bank(7, 1, FRAME_NUMBER, TIMESTAMP, [(1, HITS_A)])]
+    empty = fs.decode_frame(to_words(stream_frame(FRAME_NUMBER, TIMESTAMP, rocs, ais_entries=[]), "<"))
+    missing = fs.decode_frame(to_words(stream_frame(FRAME_NUMBER, TIMESTAMP, rocs, ais_entries=None), "<"))
+    assert (empty.n_ais_entries, empty.n_ais_distinct) == (missing.n_ais_entries, missing.n_ais_distinct) == (0, 0)
+    assert empty.warnings == 1 and "AIS segment holds no entries" in empty.warning_messages[0]
+    assert missing.warnings == 0 and empty.errors == missing.errors == 0
+    assert empty.n_hits == missing.n_hits == len(HITS_A)
 
 
 @pytest.mark.parametrize("endian", ["<", ">"])

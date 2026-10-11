@@ -63,7 +63,8 @@ def test_example_decode_handles_i17_and_duplicate_frames(tmp_path):
     checks = example.validate(stream_hits, frames)
 
     assert stats["hits"] == 7 and stats["frames"] == 3 and stats["skipped_events"] == 1
-    assert stats["payload_words"] == 7 and stats["empty_payload_banks"] == 1 and stats["decode_errors"] == 0
+    assert stats["payload_words"] == 7 and stats["empty_payload_banks"] == 1
+    assert stats["decode_errors"] == 0 and stats["decode_warnings"] == 0
     assert stats["out_of_order"] == 0
     assert checks == {"missing_frames": 3, "duplicate_frames": 1}
 

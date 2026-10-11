@@ -73,7 +73,8 @@ def test_synthetic_file_totals_and_checks(tmp_path, workers):
     assert stats.n_events == 13 and stats.n_frames == 12 and stats.n_other_events == 1
     assert stats.n_hits == expected_hits
     assert stats.non_fadc_words == 12 * len(DCRB_WORDS)
-    assert stats.n_empty_payload_banks == 24 and stats.errors == 0 and stats.n_flag_words == 0
+    assert stats.n_empty_payload_banks == 24 and stats.errors == stats.warnings == 0 and stats.n_flag_words == 0
+    assert stats.frames["errors"].tolist() == stats.frames["warnings"].tolist() == [0] * 12
     assert stats.rocs.tolist() == [7, 44] and stats.ports.tolist() == [1, 3, 4, 5, 6]
     assert dict(zip(stats.module_ids.tolist(), stats.module_words.tolist())) == {fs.MODULE_FADC250: expected_hits,
                                                                                  fs.MODULE_DCRB: 12 * len(DCRB_WORDS)}
@@ -177,7 +178,7 @@ def test_corpus_first_200_records_match_decoder():
     assert stats.checks.stride == 4 and stats.checks.missing_frames == 0 and stats.checks.duplicate_frames == 0
     assert stats.checks.frame_period_ticks == 65536
     assert int(stats.rate_counts.sum()) == decoded.n_hits and int(stats.occupancy.sum()) == decoded.n_hits
-    assert stats.errors == 0 and stats.n_trailer_records == 0
+    assert stats.errors == stats.warnings == 0 and stats.n_trailer_records == 0
     # F15: every frame of the run carries a 24-slot AIS holding one value
     assert stats.frames_with_ais == stats.frames_with_degenerate_ais == 2200
     assert int(fs.ais_degenerate_mask(decoded.frames).sum()) == 2200

@@ -45,7 +45,10 @@ banks come from the bank walk alone; the AIS never locates them.
 An empty payload bank has length 1 and num 1; a data bank has num 0. Both
 are valid. The walk trusts no length word: every bank end is checked
 against its container, a bad length stops the walk and lands in
-``errors`` and ``error_messages`` instead of an exception.
+``errors`` and ``error_messages`` instead of an exception. A malformed
+segment after the time slice segment of the SIB (an AIS with a length past
+the SIB end, or with no entries) touches no hit: it lands in ``warnings``
+and ``warning_messages`` and the walk goes on.
 
 Hit word layout (one ``uint32`` per hit), the single copy for pyevio.
 Evidence: every earlier decoder in this repository, the viewer and the
@@ -103,7 +106,7 @@ FRAME_DTYPE = np.dtype([
     ("frame", np.uint32), ("timestamp", np.uint64), ("n_hits", np.uint32), ("first_hit_index", np.uint64),
     ("event_index", np.uint32), ("n_roc_banks", np.uint16), ("n_payload_banks", np.uint16),
     ("n_empty_payload_banks", np.uint16), ("non_fadc_words", np.uint32), ("errors", np.uint16),
-    ("n_ais_entries", np.uint16), ("n_ais_distinct", np.uint16),
+    ("warnings", np.uint16), ("n_ais_entries", np.uint16), ("n_ais_distinct", np.uint16),
 ])
 ROC_BANK_DTYPE = np.dtype([
     ("event_index", np.uint32), ("frame", np.uint32), ("roc", np.uint16), ("stream", np.uint8),
@@ -236,6 +239,8 @@ class StreamHits:
     n_flag_words: int = 0
     errors: int = 0
     error_messages: List[str] = field(default_factory=list)
+    warnings: int = 0  # malformed SIB segments after the TSS; no hit depends on them
+    warning_messages: List[str] = field(default_factory=list)
 
     HIT_COLUMNS = ("frame", "event_index", "roc", "stream", "port", "channel", "time_raw", "t_ns", "charge")
 
@@ -289,6 +294,8 @@ class FrameHits:
     error_messages: List[str]
     n_ais_entries: int = 0  # entries of the SIB's aggregation info segment (0x42); 0 without one
     n_ais_distinct: int = 0  # distinct values among them; 1 with several entries means one stream repeated
+    warnings: int = 0
+    warning_messages: List[str] = field(default_factory=list)
 
 
 def concatenate_stream_hits(chunks: Iterable[StreamHits]) -> StreamHits:
@@ -307,6 +314,7 @@ def concatenate_stream_hits(chunks: Iterable[StreamHits]) -> StreamHits:
     frames["first_hit_index"] += np.repeat(hit_offsets, [len(c.frames) for c in chunks])
     roc_banks["first_hit_index"] += np.repeat(hit_offsets, [len(c.roc_banks) for c in chunks])
     messages = [m for c in chunks for m in c.error_messages][:MAX_ERROR_MESSAGES]
+    warning_messages = [m for c in chunks for m in c.warning_messages][:MAX_ERROR_MESSAGES]
     return StreamHits(
         **columns, frames=frames, roc_banks=roc_banks,
         empty_banks=np.concatenate([c.empty_banks for c in chunks]),
@@ -320,6 +328,7 @@ def concatenate_stream_hits(chunks: Iterable[StreamHits]) -> StreamHits:
         non_fadc_words=sum(c.non_fadc_words for c in chunks),
         n_flag_words=sum(c.n_flag_words for c in chunks),
         errors=sum(c.errors for c in chunks), error_messages=messages,
+        warnings=sum(c.warnings for c in chunks), warning_messages=warning_messages,
     )
 
 
@@ -340,11 +349,18 @@ class _Walk:
         self.n_payload_words = self.non_fadc_words = 0
         self.errors = 0
         self.error_messages = []
+        self.warnings = 0
+        self.warning_messages = []
 
     def error(self, event_index: int, word_i: int, reason: str) -> None:
         self.errors += 1
         if len(self.error_messages) < MAX_ERROR_MESSAGES:
             self.error_messages.append(f"event {event_index} word {word_i}: {reason}")
+
+    def warning(self, event_index: int, word_i: int, reason: str) -> None:
+        self.warnings += 1
+        if len(self.warning_messages) < MAX_ERROR_MESSAGES:
+            self.warning_messages.append(f"event {event_index} word {word_i}: {reason}")
 
     def walk_event(self, words: np.ndarray, event_index: int) -> None:
         """Walk one event; a bad length stops the walk and is recorded, never raised."""
@@ -353,7 +369,7 @@ class _Walk:
         w = np.ascontiguousarray(words, dtype=np.uint32)  # a no-op view when the dtype already matches
         n = len(w)
         read = w.item  # returns Python ints; faster than indexing a numpy scalar
-        errors_before = self.errors
+        errors_before, warnings_before = self.errors, self.warnings
         if n < 2:
             self.n_other_events += 1
             self.error(event_index, 0, f"event has {n} words, a bank header needs 2")
@@ -392,7 +408,7 @@ class _Walk:
             frame_number, timestamp, self.n_hits - hits_before, hits_before, event_index,
             len(self.roc_bank_rows) - roc_banks_before, self.n_payload_banks - payload_before,
             self.n_empty_payload_banks - empty_before, self.non_fadc_words - other_before, self.errors - errors_before,
-            n_ais_entries, n_ais_distinct,
+            self.warnings - warnings_before, n_ais_entries, n_ais_distinct,
         ))
 
     def _read_sib(self, w, read, event_end: int, event_index: int):
@@ -421,17 +437,22 @@ class _Walk:
     def _count_ais_entries(self, w, read, segment_i: int, sib_end: int, event_index: int):
         """Return ``(entries, distinct values)`` of the 0x42 segment among the SIB segments from ``segment_i``.
 
-        ``(0, 0)`` without one. The entries are uint32 words; a segment length past the SIB end
-        is a counted error and ends the search.
+        The entries are uint32 words. Three cases yield ``(0, 0)``: no 0x42 segment (nothing
+        recorded), a 0x42 segment with no entries (a warning), and a segment whose length runs
+        past the SIB end (a warning; the search ends there). No hit depends on these segments,
+        so none of them is an error.
         """
         while segment_i < sib_end:
             header = read(segment_i)
             segment_len = header & 0xFFFF
             segment_end = segment_i + segment_len + 1
             if segment_end > sib_end:
-                self.error(event_index, segment_i, f"SIB segment length {segment_len} runs past the SIB end {sib_end}")
+                self.warning(event_index, segment_i, f"SIB segment length {segment_len} runs past the SIB end {sib_end}")
                 return 0, 0
             if (header >> 24) == SIB_AIS_SEGMENT_TAG:
+                if segment_len == 0:
+                    self.warning(event_index, segment_i, "AIS segment holds no entries")
+                    return 0, 0
                 return segment_len, len(set(w[segment_i + 1:segment_end].tolist()))  # a set beats np.unique on 24 words
             segment_i = segment_end
         return 0, 0
@@ -541,6 +562,7 @@ class _Walk:
             n_empty_payload_banks=self.n_empty_payload_banks, n_unmapped_payload_banks=self.n_unmapped_payload_banks,
             n_payload_words=self.n_payload_words, non_fadc_words=self.non_fadc_words,
             n_flag_words=count_flag_words(hit_words), errors=self.errors, error_messages=self.error_messages,
+            warnings=self.warnings, warning_messages=self.warning_messages,
         )
 
 
@@ -582,6 +604,7 @@ def decode_frame(words: np.ndarray, event_index: int = 0) -> FrameHits:
         n_flag_words=stream_hits.n_flag_words, errors=stream_hits.errors, error_messages=stream_hits.error_messages,
         n_ais_entries=int(frame_row["n_ais_entries"]) if is_stream_frame else 0,
         n_ais_distinct=int(frame_row["n_ais_distinct"]) if is_stream_frame else 0,
+        warnings=stream_hits.warnings, warning_messages=stream_hits.warning_messages,
     )
 
 
