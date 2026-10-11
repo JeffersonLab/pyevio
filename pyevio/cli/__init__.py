@@ -12,6 +12,7 @@ from pyevio.cli.event import event_command
 from pyevio.cli.hex import hex_command
 from pyevio.cli.ui import ui_command
 from pyevio.cli.ana import ana_command
+from pyevio.cli.web import web_command
 
 
 @click.group(invoke_without_command=True)
@@ -41,6 +42,7 @@ cli.add_command(event_command)
 cli.add_command(hex_command)
 cli.add_command(ui_command)
 cli.add_command(ana_command)
+cli.add_command(web_command)
 
 
 # Entry point for the CLI

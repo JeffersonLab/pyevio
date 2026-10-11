@@ -77,6 +77,15 @@ class Record:
                 # Update cumulative offset for next event
                 current_offset += event_length
 
+        elif self.header.event_count > 0:
+            # No index array: walk events by the length word of each event bank
+            current_offset = self.data_start
+            while current_offset + 8 <= self.data_end and len(event_info) < self.header.event_count:
+                bank_length = struct.unpack(self.endian + 'I', self.mm[current_offset:current_offset+4])[0]
+                event_length = (bank_length + 1) * 4
+                event_info.append((current_offset, event_length))
+                current_offset += event_length
+
         return event_info
 
     def get_events(self, start_event: Optional[int] = None, end_event: Optional[int] = None):
