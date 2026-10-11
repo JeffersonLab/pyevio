@@ -28,7 +28,7 @@ import os
 import struct
 import time
 from dataclasses import dataclass, field, asdict, fields
-from typing import List, Optional
+from typing import Callable, List, Optional
 
 import numpy as np
 
@@ -49,6 +49,16 @@ RECORD_TYPE_TRAILER = 3
 # A frame whose timestamp step per frame deviates by more than this fraction from the median is an outlier.
 DTS_OUTLIER_TOLERANCE = 0.01
 MAX_ERROR_MESSAGES = 50
+
+# Hooks of compute_stream_stats: progress(records_done, records_total) is called after the
+# header scan and after every decoded task; cancel() is polled between chunks and tasks.
+ProgressCallback = Callable[[int, int], None]
+CancelCheck = Callable[[], bool]
+
+
+class StatsCancelled(Exception):
+    """Raised by compute_stream_stats when its cancel check returns True."""
+
 
 FRAME_SCAN_DTYPE = np.dtype([("record", np.uint32), ("event", np.uint32), ("frame", np.uint32), ("timestamp", np.uint64)])
 FRAME_STATS_DTYPE = np.dtype([
@@ -284,12 +294,19 @@ def _init_worker(path: str) -> None:
 
 
 def _decode_records(evio_file: EvioFile, record_range, events_before_record: np.ndarray, t_first: int, t_last: int,
-                    n_rate_bins: int, chunk_records: int) -> Accumulator:
-    """Decode a range of records in chunks and accumulate histograms; trailers and out-of-bounds events are skipped."""
+                    n_rate_bins: int, chunk_records: int, progress: Optional[ProgressCallback] = None,
+                    cancel: Optional[CancelCheck] = None) -> Accumulator:
+    """Decode a range of records in chunks and accumulate histograms; trailers and out-of-bounds events are skipped.
+
+    ``progress`` receives (records done in this range, records in this range) after each chunk;
+    ``cancel`` is polled before each chunk and raises :class:`StatsCancelled`.
+    """
     accumulator = Accumulator(t_first, t_last, n_rate_bins)
     endian = evio_file.header.endian
     record_list = list(record_range)
     for chunk_start in range(0, len(record_list), chunk_records):
+        if cancel is not None and cancel():
+            raise StatsCancelled(f"cancelled after {chunk_start} of {len(record_list)} records")
         chunk = record_list[chunk_start:chunk_start + chunk_records]
         events = []
         first_event_index = int(events_before_record[chunk[0]])
@@ -305,12 +322,16 @@ def _decode_records(evio_file: EvioFile, record_range, events_before_record: np.
                     events.append(fs.event_words(buffer, offset, length, endian))
             record.release()  # drop a decompressed buffer early; the views above keep it alive while needed
         accumulator.absorb(fs.decode_frames(events, first_event_index=first_event_index))
+        if progress is not None:
+            progress(chunk_start + len(chunk), len(record_list))
     return accumulator
 
 
-def _process_range(args) -> Accumulator:
+def _process_range(args):
+    """Worker entry: decode one record range; returns the range too because results arrive unordered."""
     start, end, events_before_record, t_first, t_last, n_rate_bins, chunk_records = args
-    return _decode_records(_worker_file, range(start, end), events_before_record, t_first, t_last, n_rate_bins, chunk_records)
+    partial = _decode_records(_worker_file, range(start, end), events_before_record, t_first, t_last, n_rate_bins, chunk_records)
+    return start, end, partial
 
 
 # ---------------------------------------------------------------- result
@@ -427,8 +448,14 @@ class StreamStats:
 
 def compute_stream_stats(path: str, workers: Optional[int] = None, rate_bins: int = DEFAULT_RATE_BINS,
                          tick_ns: float = DEFAULT_TICK_NS, max_records: Optional[int] = None,
-                         chunk_records: int = DEFAULT_CHUNK_RECORDS) -> StreamStats:
-    """Scan, decode and histogram a streaming file. ``workers=1`` runs in-process."""
+                         chunk_records: int = DEFAULT_CHUNK_RECORDS, progress: Optional[ProgressCallback] = None,
+                         cancel: Optional[CancelCheck] = None) -> StreamStats:
+    """Scan, decode and histogram a streaming file. ``workers=1`` runs in-process.
+
+    ``progress(records_done, records_total)`` is called after the header scan (0 done) and after
+    every decoded chunk or task. ``cancel()`` is polled between chunks and tasks; True raises
+    :class:`StatsCancelled` and, with a worker pool, terminates the workers.
+    """
     t_start = time.perf_counter()
     workers = default_workers() if workers is None else max(1, int(workers))
     with EvioFile(path) as evio_file:
@@ -436,22 +463,32 @@ def compute_stream_stats(path: str, workers: Optional[int] = None, rate_bins: in
         scan = scan_frames(evio_file, max_records)
         checks = frame_checks(scan.frames)
         n_records = scan.n_records
+        if progress is not None:
+            progress(0, n_records)
         last_record = evio_file.get_record(n_records - 1) if n_records else None
         bytes_processed = last_record.offset + last_record.size if last_record else 0
         if workers == 1:
             partial = _decode_records(evio_file, range(n_records), scan.events_before_record,
-                                      checks.first_timestamp, checks.last_timestamp, rate_bins, chunk_records)
+                                      checks.first_timestamp, checks.last_timestamp, rate_bins, chunk_records,
+                                      progress=progress, cancel=cancel)
     if workers > 1:
         n_tasks = min(n_records, workers * 4) or 1
         bounds = np.linspace(0, n_records, n_tasks + 1, dtype=np.int64)
         tasks = [(int(bounds[i]), int(bounds[i + 1]), scan.events_before_record, checks.first_timestamp,
                   checks.last_timestamp, rate_bins, chunk_records) for i in range(n_tasks) if bounds[i] < bounds[i + 1]]
         partial = Accumulator(checks.first_timestamp, checks.last_timestamp, rate_bins)
+        records_done = 0
         # forkserver: a forked copy of a multi-threaded parent (numpy, pytest) may deadlock; workers re-import pyevio instead.
         context = multiprocessing.get_context("forkserver")
+        # Leaving the `with` block (also by StatsCancelled) terminates the workers.
         with context.Pool(workers, initializer=_init_worker, initargs=(path,)) as pool:
-            for result in pool.imap_unordered(_process_range, tasks):
+            for start, end, result in pool.imap_unordered(_process_range, tasks):
                 partial.merge(result)
+                records_done += end - start
+                if progress is not None:
+                    progress(records_done, n_records)
+                if cancel is not None and cancel():
+                    raise StatsCancelled(f"cancelled after {records_done} of {n_records} records")
 
     frames = np.concatenate(partial.frame_rows) if partial.frame_rows else np.empty(0, dtype=FRAME_STATS_DTYPE)
     frames = frames[np.argsort(frames["event_index"], kind="stable")]
