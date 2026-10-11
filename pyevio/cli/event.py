@@ -87,8 +87,7 @@ def event_command(ctx, filename, event_index, record_index, hexdump, verbose):
             else:
                 # Record-specific event indexing
                 record = evio_file.get_record(record_index)
-                event = evio_file.get_event(event_index)
-                record_index = evio_file.get_records().index(record)
+                event = record.get_event(event_index)
 
             # Display the event information
             display_event(

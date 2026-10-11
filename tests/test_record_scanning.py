@@ -1,5 +1,8 @@
 import struct
+import zlib
 
+import lz4.block
+import numpy as np
 import pytest
 
 from pyevio.evio_file import EvioFile
@@ -14,14 +17,37 @@ def make_event(n_payload_words, tag=0xFF60):
     return struct.pack("<%dI" % len(words), *words)
 
 
-def make_record(number, events, last, with_index):
+def padded(data):
+    """Pad bytes to whole words, as writers store user headers."""
+    return data + bytes(-len(data) % 4)
+
+
+def make_record(number, events, last, with_index, user_header=b"", compression=0):
+    """A 14-word-header record; ``user_header`` may have an odd length (its padding is implicit).
+
+    ``compression`` 1 (LZ4), 2 (LZ4_BEST) or 3 (gzip) compresses index + padded
+    user header + events the way the evio writers do: the compressed length in
+    word 10 counts whole words and pad3 (bits 24—25 of word 5) counts the
+    filler bytes in the last word.
+    """
     index = struct.pack("<%dI" % len(events), *(len(e) for e in events)) if with_index else b""
     data = b"".join(events)
     bit_info = LAST_RECORD_BIT if last else 0
-    length_words = 14 + (len(index) + len(data)) // 4
+    body = index + padded(user_header) + data
+    compression_word = 0
+    if compression in (1, 2):
+        body = lz4.block.compress(body, store_size=False)
+    elif compression == 3:
+        body = zlib.compress(body, wbits=31)
+    if compression:
+        pad3 = -len(body) % 4
+        body += bytes(pad3)
+        bit_info |= pad3 << 24
+        compression_word = (compression << 28) | (len(body) // 4)
+    length_words = 14 + len(body) // 4
     header = struct.pack("<14I", length_words, number, 14, len(events), len(index),
-                         bit_info | 6, 0, MAGIC, len(data), 0, 0, 0, 0, 0)
-    return header + index + data
+                         bit_info | 6, len(user_header), MAGIC, len(data), compression_word, 0, 0, 0, 0)
+    return header + body
 
 
 def make_trailer(number, records, with_index):
@@ -36,9 +62,10 @@ def make_trailer(number, records, with_index):
     return header + index
 
 
-def write_file(path, records, trailer=b""):
-    header = struct.pack("<14I", 0x4556494F, 1, 14, len(records), 0, 6, 0, MAGIC, 0, 0, 0, 0, 0, 0)
-    path.write_bytes(header + b"".join(records) + trailer)
+def write_file(path, records, trailer=b"", user_header=b""):
+    """A v6 file: 14-word header, optional (odd-length) user header, records, trailer bytes."""
+    header = struct.pack("<14I", 0x4556494F, 1, 14, len(records), 0, 6, len(user_header), MAGIC, 0, 0, 0, 0, 0, 0)
+    path.write_bytes(header + padded(user_header) + b"".join(records) + trailer)
     return str(path)
 
 
@@ -130,6 +157,126 @@ def test_hipo_file_type_id_in_ascii_byte_order(tmp_path):
         assert f.header.file_type == "HIPO"
         assert f.header.endian == "<"
         assert event_lengths(f) == [[12]]
+
+
+def test_user_header_lengths_are_padded_to_words(tmp_path):
+    """Odd user header lengths at file level (7) and record level (5) shift nothing (F8)."""
+    records = [make_record(1, [make_event(2), make_event(3)], last=True, with_index=True, user_header=b"abcde")]
+    with EvioFile(write_file(tmp_path / "padded.evio", records, user_header=b"1234567"), ) as f:
+        assert f.first_record_offset == 56 + 8
+        record = f.get_record(0)
+        assert record.header.user_header_length == 5
+        assert record.data_start == record.index_array_end + 8
+        assert [e.length for e in record.get_events()] == [16, 20]
+        assert [e.get_bank().length for e in record.get_events()] == [3, 4]
+        assert record.errors == []
+
+
+@pytest.mark.parametrize("compression", [1, 2, 3], ids=["lz4", "lz4best", "gzip"])
+def test_compressed_record_events_are_read_from_the_decompressed_buffer(tmp_path, compression):
+    """Events of an LZ4, LZ4_BEST or gzip record come from Record.buffer; offsets are into it (F4)."""
+    events = [make_event(2), make_event(3), make_event(1)]
+    records = [make_record(1, events, last=False, with_index=True, user_header=b"xyz", compression=compression),
+               make_record(2, [make_event(4)], last=True, with_index=True)]
+    with EvioFile(write_file(tmp_path / "compressed.evio", records)) as f:
+        compressed = f.get_record(0)
+        assert compressed.compression_type == compression
+        assert compressed.buffer is not f.mm
+        assert len(compressed.buffer) == 12 + 4 + sum(len(e) for e in events)
+        assert compressed.scan_events() == [(16, 16), (32, 20), (52, 12)]
+        assert [e.get_bank().get_data() for e in compressed.get_events()] == [
+            struct.pack("<II", 0, 1), struct.pack("<III", 0, 1, 2), struct.pack("<I", 0)]
+        assert compressed.errors == []
+        assert compressed.events_to_numpy(signature=0xFF60).tolist() == [
+            3, 0xFF601000, 0, 1, 4, 0xFF601000, 0, 1, 2, 2, 0xFF601000, 0]
+
+        plain = f.get_record(1)
+        assert plain.buffer is f.mm
+        assert event_lengths(f)[1] == [24]
+
+        compressed.release()
+        assert compressed.scan_events() == [(16, 16), (32, 20), (52, 12)]
+
+
+def test_truncated_final_record_keeps_complete_events(tmp_path):
+    """A final record cut by EOF keeps its complete events and becomes a check (F5, D4)."""
+    events = [make_event(2), make_event(3), make_event(5)]
+    whole = make_record(2, events, last=False, with_index=False)
+    cut = whole[:len(whole) - 12]  # the last event loses its tail
+    records = [make_record(1, [make_event(1)], last=False, with_index=True)]
+    path = tmp_path / "truncated.evio"
+    write_file(path, records)
+    with open(path, "ab") as f:
+        f.write(cut)
+    with EvioFile(str(path)) as f:
+        assert f.record_count == 2
+        tail = f.get_record(1)
+        assert tail.is_truncated
+        assert [e.length for e in tail.get_events()] == [16, 20]
+        assert len(tail.errors) == 1 and "declares 28 bytes" in tail.errors[0]
+        assert f.checks == [("truncated_tail", len(whole), len(cut), 2)]
+        assert f.get_total_event_count() == 3  # 1 + the 2 salvaged, although the tail header declares 3
+        assert f.get_record_and_event(2)[1].length == 20
+        with pytest.raises(IndexError):
+            f.get_record_and_event(3)
+
+
+def test_record_with_zero_header_length_ends_the_scan(tmp_path):
+    """A header declaring 0 words cannot be stepped over; the scan stops with a check."""
+    stuck = struct.pack("<14I", 0, 2, 0, 0, 0, 6, 0, MAGIC, 0, 0, 0, 0, 0, 0)
+    records = [make_record(1, [make_event(1)], last=False, with_index=True)]
+    with EvioFile(write_file(tmp_path / "stuck.evio", records, trailer=stuck)) as f:
+        assert f.record_count == 1
+        assert f.checks[0][:2] == ("bad_record_header", 56 + len(records[0]))
+
+
+def test_garbage_after_a_record_ends_the_scan(tmp_path):
+    """Bytes that are no record header stop the record scan with a check (F5)."""
+    records = [make_record(1, [make_event(1)], last=False, with_index=True)]
+    with EvioFile(write_file(tmp_path / "garbage.evio", records, trailer=b"\xff" * 40)) as f:
+        assert f.record_count == 1
+        assert len(f.checks) == 1
+        assert f.checks[0][:2] == ("bad_record_header", 56 + len(records[0]))
+
+
+def test_root_bank_never_reads_past_its_event(tmp_path):
+    """An event whose bank length word overruns the event is clamped and reported (F5)."""
+    event = bytearray(make_event(2))
+    struct.pack_into("<I", event, 0, 1000)
+    records = [make_record(1, [bytes(event), make_event(1)], last=True, with_index=True)]
+    with EvioFile(write_file(tmp_path / "overrun.evio", records)) as f:
+        first, second = f.get_record(0).get_events()
+        bank = first.get_bank()
+        assert bank.length == 1000
+        assert bank.end_offset == first.end_offset
+        assert bank.data_length == 8
+        assert bank.get_data() == struct.pack("<II", 0, 1)
+        assert bank.get_children() == []  # a bank of banks whose payload words are no bank header
+        assert len(bank.errors) == 2 and "declares 1000 words" in bank.errors[0]
+        assert second.get_bank().errors == []
+
+
+def test_close_releases_mmap_and_file(tmp_path):
+    """After the with block both the mmap and the file are closed (F7)."""
+    records = [make_record(1, [make_event(1)], last=True, with_index=True)]
+    with EvioFile(write_file(tmp_path / "close.evio", records)) as f:
+        f.get_record(0).get_events()
+    assert f.mm.closed
+    assert f.file.closed
+    f.close()  # a second close is harmless
+
+
+def test_close_with_live_view_raises_and_still_closes_the_file(tmp_path):
+    """A numpy view of the mmap makes __exit__ raise BufferError naming the cause; the file closes anyway (F7)."""
+    records = [make_record(1, [make_event(1)], last=True, with_index=True)]
+    with pytest.raises(BufferError, match="numpy array or memoryview"):
+        with EvioFile(write_file(tmp_path / "view.evio", records)) as f:
+            view = np.frombuffer(f.mm, dtype=np.uint8, count=8)
+    assert f.file.closed
+    assert not f.mm.closed
+    del view
+    f.close()
+    assert f.mm.closed
 
 
 @pytest.mark.parametrize("last", [False, True])

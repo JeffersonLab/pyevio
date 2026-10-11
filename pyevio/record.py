@@ -1,11 +1,18 @@
 import mmap
 import struct
-from typing import List, Tuple, Optional, Dict, Any
-from datetime import datetime
-from typing import Optional, List, Tuple, Dict, Any
+import zlib
+from typing import List, Tuple, Optional, Union
+
+import lz4.block
+import numpy as np
+
 from pyevio.record_header import RecordHeader
 from pyevio.utils import make_hex_dump
-import numpy as np
+
+
+def padded_to_words(length_bytes: int) -> int:
+    """A byte length rounded up to whole 32-bit words, as user headers are stored."""
+    return (length_bytes + 3) & ~3
 
 
 class Record:
@@ -15,7 +22,20 @@ class Record:
     A record contains a header followed by an event index array, optional user header,
     and multiple events. This class provides methods to access and parse the record
     structure efficiently.
+
+    Buffers: ``mm`` is the file; ``buffer`` is where the index array, user
+    header and events live. For an uncompressed record ``buffer`` is ``mm``
+    and all offsets are file offsets. For a compressed record (LZ4, LZ4_BEST
+    or gzip, header word 10) ``buffer`` is the decompressed bytes, built on
+    first access, and ``index_array_start``, ``data_start``, ``data_end`` and
+    every event offset are offsets into that buffer. Read event bytes through
+    ``buffer``, never through ``mm``.
     """
+
+    COMPRESSION_NONE = 0
+    COMPRESSION_LZ4 = 1
+    COMPRESSION_LZ4_BEST = 2
+    COMPRESSION_GZIP = 3
 
     def __init__(self, mm: mmap.mmap, offset: int, endian: str = '<', index=-1):
         """
@@ -25,30 +45,102 @@ class Record:
             mm: Memory-mapped file containing the record
             offset: Byte offset in the file where the record starts
             endian: Endianness ('<' for little endian, '>' for big endian)
+            index: Record index within the file (for reference)
         """
         self.mm = mm
         self.offset = offset
         self.endian = endian
+        self.index = index
 
         # Parse the record header
         self.header = RecordHeader.parse(mm, offset)
 
-        # Calculate key positions in the record
         self.header_size = self.header.header_length * 4
-        self.index_array_start = self.offset + self.header_size
-        self.index_array_end = self.index_array_start + self.header.index_array_length
-        self.data_start = self.index_array_end + self.header.user_header_length
-        self.data_end = self.offset + (self.header.record_length * 4)
         self.size = self.header.record_length * 4
-        self.index = index
+        self.compression_type = self.header.compression_type
+
+        # Declared record end against the file: a record that runs past the
+        # end of the file is truncated, and reads stop at the present bytes.
+        self.declared_end = self.offset + self.size
+        self.file_end = min(self.declared_end, len(mm))
+        self.is_truncated = self.declared_end > len(mm)
+
+        # Why an event walk stopped early (short strings with offsets); empty
+        # when every event length fit inside the record.
+        self.errors: List[str] = []
+
+        # The user header is stored padded to whole words; the unpadded length
+        # in the header word shifts every event by the padding otherwise.
+        user_header_padded = padded_to_words(self.header.user_header_length)
+
+        self._buffer = None
+        if self.compression_type == self.COMPRESSION_NONE:
+            self._buffer = mm
+            self.index_array_start = self.offset + self.header_size
+            self.index_array_end = self.index_array_start + self.header.index_array_length
+            self.data_start = self.index_array_end + user_header_padded
+            self.data_end = self.file_end
+        else:
+            # Layout of the decompressed buffer: index array, user header, events.
+            self.index_array_start = 0
+            self.index_array_end = self.header.index_array_length
+            self.data_start = self.index_array_end + user_header_padded
+            self.data_end = self.data_start + self.header.uncompressed_data_length
 
         # Cache for events (will be populated on demand)
         self._events = None
         self._event_info = None
 
-        # Why an event walk stopped early (short strings with offsets); empty
-        # when every event length fit inside the record.
-        self.errors: List[str] = []
+    @property
+    def buffer(self) -> Union[mmap.mmap, bytes]:
+        """The buffer that holds the index array, user header and events (see class docstring)."""
+        if self._buffer is None:
+            self._buffer = self._decompress()
+        return self._buffer
+
+    def release(self) -> None:
+        """Drop the decompressed buffer and the Event cache; the next access rebuilds them."""
+        if self.compression_type != self.COMPRESSION_NONE:
+            self._buffer = None
+        self._events = None
+
+    def _decompress(self) -> bytes:
+        """Decompress index array + user header + events into one bytes buffer.
+
+        Header facts (verified on the evio C++ and Java writers): the
+        compressed region starts right after the header; word 10 holds the
+        compression type in bits 28—31 and the compressed length in words
+        below; the last word carries pad3 (bits 24—25 of word 5) filler bytes
+        that are not part of the stream. LZ4 and LZ4_BEST are the LZ4 block
+        format (no frame) and need the decompressed size up front: word 9
+        counts the events only, so the index array and padded user header are
+        added to it.
+        """
+        compressed_words = self.header.compressed_data_length
+        compressed_start = self.offset + self.header_size
+        compressed_end = compressed_start + compressed_words * 4 - self.header.pad3
+        if compressed_end > self.file_end:
+            self.errors.append(f"compressed data declares {compressed_words} words at 0x{compressed_start:X}, "
+                               f"record ends at 0x{self.file_end:X}")
+            compressed_end = self.file_end
+        compressed = self.mm[compressed_start:compressed_end]
+
+        try:
+            if self.compression_type in (self.COMPRESSION_LZ4, self.COMPRESSION_LZ4_BEST):
+                decompressed = lz4.block.decompress(compressed, uncompressed_size=self.data_end)
+            elif self.compression_type == self.COMPRESSION_GZIP:
+                decompressed = zlib.decompress(compressed, wbits=47)  # gzip or zlib wrapper
+            else:
+                self.errors.append(f"unknown compression type {self.compression_type}")
+                decompressed = b""
+        except (lz4.block.LZ4BlockError, zlib.error, ValueError) as error:
+            self.errors.append(f"decompression failed (type {self.compression_type}): {error}")
+            decompressed = b""
+
+        if len(decompressed) < self.data_end:
+            self.errors.append(f"decompressed {len(decompressed)} bytes, header declares {self.data_end}")
+            self.data_end = len(decompressed)
+        return decompressed
 
     @property
     def event_count(self) -> int:
@@ -65,7 +157,8 @@ class Record:
         Scan and parse all events in this record.
 
         Returns:
-            List of tuples (offset, length) for all events in the record
+            List of tuples (offset, length) for all events in the record;
+            offsets are into ``buffer`` (file offsets for uncompressed records)
         """
         if self._event_info is None:
             self._event_info = self._scan_events()
@@ -77,19 +170,22 @@ class Record:
         if self.header.is_trailer:
             return []
 
+        buffer = self.buffer
         event_info = []
         current_offset = self.data_start
 
         if self.header.index_array_length > 0:
             # The index array holds one byte length per event. The header's
             # event count and the index size are two claims about the same
-            # number; trust neither beyond the other.
+            # number; trust neither beyond the other, nor beyond the bytes
+            # present (a truncated record may cut the index array itself).
             index_entries = self.header.index_array_length // 4
-            event_count = min(self.header.event_count, index_entries)
+            index_present = max(0, min(self.index_array_end, len(buffer)) - self.index_array_start) // 4
+            event_count = min(self.header.event_count, index_entries, index_present)
 
             for event_i in range(event_count):
                 length_offset = self.index_array_start + event_i * 4
-                event_length = struct.unpack(self.endian + 'I', self.mm[length_offset:length_offset + 4])[0]
+                event_length = struct.unpack(self.endian + 'I', buffer[length_offset:length_offset + 4])[0]
                 if event_length < 8 or current_offset + event_length > self.data_end:
                     self.errors.append(f"event {event_i} at 0x{current_offset:X} declares {event_length} bytes, "
                                        f"record data ends at 0x{self.data_end:X}")
@@ -106,7 +202,7 @@ class Record:
                     self.errors.append(f"event {len(event_info)} at 0x{current_offset:X} has no room for a bank header, "
                                        f"record data ends at 0x{self.data_end:X}")
                     break
-                bank_length = struct.unpack(self.endian + 'I', self.mm[current_offset:current_offset + 4])[0]
+                bank_length = struct.unpack(self.endian + 'I', buffer[current_offset:current_offset + 4])[0]
                 event_length = (bank_length + 1) * 4
                 if bank_length == 0 or current_offset + event_length > self.data_end:
                     self.errors.append(f"event {len(event_info)} at 0x{current_offset:X} declares {event_length} bytes, "
@@ -131,10 +227,9 @@ class Record:
         # Scan events only if needed
         if self._events is None:
             from pyevio.event import Event  # Import here to avoid circular import
-            event_info = self.scan_events()
             self._events = [
-                Event(self.mm, offset, length, self.endian, i)
-                for i, (offset, length) in enumerate(event_info)
+                Event(self.buffer, offset, length, self.endian, i)
+                for i, (offset, length) in enumerate(self.scan_events())
             ]
 
         # Apply range filter
@@ -159,7 +254,7 @@ class Record:
             end_event: Ending event index, exclusive (default: all events)
 
         Returns:
-            List of tuples (offset, length) for each event
+            List of tuples (offset, length) for each event; offsets are into ``buffer``
         """
         event_info = self.scan_events()
 
@@ -175,6 +270,9 @@ class Record:
             end_event = max(start_event, min(end_event, len(event_info)))
 
         return event_info[start_event:end_event]
+
+    def _second_word(self, offset: int) -> int:
+        return struct.unpack(self.endian + 'I', self.buffer[offset + 4:offset + 8])[0]
 
     def events_to_numpy_direct(self, start_event: Optional[int] = None, end_event: Optional[int] = None,
                                signature: Optional[int] = None, event_size_words: Optional[int] = None) -> np.ndarray:
@@ -195,51 +293,32 @@ class Record:
         # Get event offsets and lengths
         event_info = self.get_event_offsets(start_event, end_event)
 
-        if not event_info:
-            return np.array([], dtype=np.uint32)
-
         if signature is not None:
-            # Filter events by signature
-            filtered_info = []
-            signature_mask = signature & 0xFFFF  # Use only top 16 bits
-
-            for offset, length in event_info:
-                if length >= 8:  # Need at least 2 words
-                    # Get the second word
-                    second_word = struct.unpack(self.endian + 'I', self.mm[offset + 4:offset + 8])[0]
-                    if (second_word >> 16) == signature_mask:
-                        filtered_info.append((offset, length))
-
-            event_info = filtered_info
+            # Filter events by the tag in the second word (every event has 8+ bytes)
+            signature_mask = signature & 0xFFFF
+            event_info = [(offset, length) for offset, length in event_info
+                          if (self._second_word(offset) >> 16) == signature_mask]
 
         if not event_info:
             return np.array([], dtype=np.uint32)
+
+        dtype = np.dtype(np.uint32).newbyteorder(self.endian)
+        buffer = self.buffer
 
         if event_size_words is not None:
             # All events have the same size, we can create a regular 2D array
-            num_events = len(event_info)
-            result = np.zeros((num_events, event_size_words), dtype=np.uint32)
+            result = np.zeros((len(event_info), event_size_words), dtype=np.uint32)
 
-            for i, (offset, _) in enumerate(event_info):
-                # Read event data directly into result array with correct endianness
-                event_data = np.frombuffer(
-                    self.mm[offset:offset + (event_size_words * 4)],
-                    dtype=np.dtype(np.uint32).newbyteorder('>' if self.endian == '>' else '<')
-                )
-                result[i, :len(event_data)] = event_data
+            for i, (offset, length) in enumerate(event_info):
+                # Never read past the event: a shorter event leaves zeros.
+                word_count = min(event_size_words, length // 4)
+                result[i, :word_count] = np.frombuffer(buffer, dtype=dtype, count=word_count, offset=offset)
 
             return result
         else:
             # Variable-sized events, create a list of arrays
-            event_arrays = []
-
-            for offset, length in event_info:
-                word_count = length // 4
-                event_data = np.frombuffer(
-                    self.mm[offset:offset + length],
-                    dtype=np.uint32
-                )
-                event_arrays.append(event_data)
+            event_arrays = [np.frombuffer(buffer, dtype=dtype, count=length // 4, offset=offset)
+                            for offset, length in event_info]
 
             # Try to determine if all events are the same size after filtering
             if all(len(arr) == len(event_arrays[0]) for arr in event_arrays):
@@ -269,15 +348,9 @@ class Record:
 
         return events[index]
 
-    import numpy as np
-
     def events_to_numpy(self, signature: int = 0xFF60, start_event: Optional[int] = None, end_event: Optional[int] = None, dtype=np.uint32) -> np.ndarray:
         """
-        Convert events with a specific signature to a NumPy array.
-
-        This method efficiently converts events where the second word matches the given signature
-        to a NumPy array. It avoids slow event-by-event Python loops by taking a vectorized approach
-        where possible.
+        Concatenate the words of every event whose tag matches the signature into one NumPy array.
 
         Args:
             signature: Integer signature to match in the second word of events (default: 0xFF60)
@@ -288,64 +361,26 @@ class Record:
         Returns:
             NumPy array containing all event data matching the signature
         """
-        # Get all events or subset based on start/end parameters
-        events = self.get_events(start_event, end_event)
+        signature_mask = signature & 0xFFFF
+        matching = [(offset, length) for offset, length in self.get_event_offsets(start_event, end_event)
+                    if (self._second_word(offset) >> 16) == signature_mask]
 
-        if not events:
+        if not matching:
             return np.array([], dtype=dtype)
 
-        # Extract offsets and lengths for all events
-        offsets = np.array([event.offset for event in events], dtype=np.int64)
-        lengths = np.array([event.length for event in events], dtype=np.int64)
-
-        # Filter out events that are too small
-        valid_indices = lengths >= 8
-        offsets = offsets[valid_indices]
-        lengths = lengths[valid_indices]
-
-        if len(offsets) == 0:
-            return np.array([], dtype=dtype)
-
-        # Check which events match the signature
-        signatures = np.zeros(len(offsets), dtype=np.uint32)
-
-        for i in range(len(offsets)):
-            # Extract the second word (bytes 4-8)
-            second_word = int.from_bytes(
-                self.mm[offsets[i] + 4:offsets[i] + 8],
-                byteorder='little' if self.endian == '<' else 'big'
-            )
-            signatures[i] = second_word >> 16
-
-        # Create a mask for events that match our signature
-        mask = signatures == (signature & 0xFFFF)
-        matching_offsets = offsets[mask]
-        matching_lengths = lengths[mask]
-
-        if len(matching_offsets) == 0:
-            return np.array([], dtype=dtype)
-
-        # Calculate the total size and preallocate array
-        total_words = np.sum(matching_lengths) // 4
+        total_words = sum(length // 4 for _, length in matching)
         result = np.zeros(total_words, dtype=dtype)
+        buffer = self.buffer
+        source_dtype = np.dtype(np.uint32).newbyteorder(self.endian)
 
-        # Copy each matching event's data into the result array
         current_idx = 0
-        for i in range(len(matching_offsets)):
-            offset = matching_offsets[i]
-            length = matching_lengths[i]
+        for offset, length in matching:
             words = length // 4
-
-            # Use np.frombuffer for efficient memory-to-array conversion
-            event_data = np.frombuffer(
-                self.mm[offset:offset + length],
-                dtype=dtype
-            )
-
-            result[current_idx:current_idx + words] = event_data
+            result[current_idx:current_idx + words] = np.frombuffer(buffer, dtype=source_dtype, count=words, offset=offset)
             current_idx += words
 
         return result
+
     def get_hex_dump(self, word_count: int = 14, title: Optional[str] = None) -> str:
         """
         Generate a hex dump of the record header.

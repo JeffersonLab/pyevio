@@ -43,6 +43,9 @@ class RecordHeader:
         self.version = -1
         self.bit_info = -1
         self.header_type = -1
+        self.pad1 = 0
+        self.pad2 = 0
+        self.pad3 = 0
         self.user_header_length = -1
         self.magic_number = -1
         self.uncompressed_data_length = 0
@@ -77,6 +80,9 @@ class RecordHeader:
             RecordHeader object with parsed data
         """
         header = RecordHeader()
+        if offset + 8 * 4 > len(buffer):
+            raise ValueError(f"Record header at offset 0x{offset:X} needs 8 words, "
+                             f"buffer ends at 0x{len(buffer):X}")
         reader = BufferReader(buffer, offset)
 
         # The first eight words exist in every header layout.
@@ -91,6 +97,11 @@ class RecordHeader:
         header.version = bit_info_version & 0xFF
         header.bit_info = (bit_info_version >> 8) & 0xFFFFF
         header.header_type = (bit_info_version >> 28) & 0xF
+        # Padding byte counts: pad1 after the user header, pad2 after the
+        # events, pad3 after the compressed data (bits 20—25 of word 5).
+        header.pad1 = (bit_info_version >> 20) & 0x3
+        header.pad2 = (bit_info_version >> 22) & 0x3
+        header.pad3 = (bit_info_version >> 24) & 0x3
 
         header.user_header_length = reader.read_uint32(6)
         header.magic_number = reader.read_uint32(7)
@@ -98,6 +109,9 @@ class RecordHeader:
         # Words 8—13 exist only in the 14-word layout; reading them from an
         # 8-word header would take the first event's words as header fields.
         if header.header_length >= 14:
+            if offset + 14 * 4 > len(buffer):
+                raise ValueError(f"Record header at offset 0x{offset:X} declares 14 words, "
+                                 f"buffer ends at 0x{len(buffer):X}")
             header.uncompressed_data_length = reader.read_uint32(8)
 
             compression_data = reader.read_uint32(9)
