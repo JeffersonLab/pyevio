@@ -7,8 +7,10 @@ Not a test (pytest ignores the name). Run from the repository root:
 FILE defaults to the SRO corpus file; when it is unreadable the synthetic
 stream file of the tests is written to a temporary folder and used instead.
 The two Plots shots are taken at ``--plots-size``: the occupancy heatmap prints
-its counts only when every count fits in its cell, which with 16 cells across
-and counts in the millions takes a terminal of about 260 columns.
+its counts only when every count fits in its cell with a column to spare, which
+with 16 cells across and counts in the millions takes a terminal of about 250
+columns, and it draws one line per row (16 ports) only in a plot 19 lines high,
+i.e. a terminal of about 50 lines.
 
 The analysis runs before the app starts, through the session alone, and its
 result goes to the default cache (``~/.cache/pyevio/stats``), so the app loads
