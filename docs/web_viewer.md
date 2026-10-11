@@ -43,46 +43,45 @@ Then open the URL the server printed on the node, token included, in a local bro
 
 ## What it shows
 
+The page is five static files (`index.html`, `style.css`, `app.js`, `charts.js`, `tree.js`) served by the package; no build step and no external resources, so it works on a farm node without internet. Pick a file in the folder browser at the top; the status strip shows the analysis progress (records done, time left) and the tabs enable when the analysis is done. Opening another file cancels the running analysis and switches the page to the new file. Errors from the server (a file that is not EVIO, a failed analysis, a lost connection) appear in red under the status line.
+
 ### Overview
 
-Totals, file checks (last-record bits, missing event index, compressed records, frame gaps, out-of-order frames) and notable channels.
+Totals (records, events, stream frames, hits, hit rate, hits per frame, duration, decode errors), the file checks with their status, "what stands out" (the failed and warning checks first), the file facts (header layout, byte order, trailer position as the file header stores it, salvaged events of a truncated tail) and one row per ROC. Ratios with a zero denominator print as `n/a`.
 
 ![Overview tab](images/web_viewer_overview.png)
 
 ### Plots
 
-Three levels, from the whole file down to one channel.
+All histograms are computed by `pyevio stats` on the server; the browser draws the bins it receives.
 
-**File:** hits per frame, and total hit rate over time. Gaps show missing frames.
+**File:** hits per frame, total hit rate over time (seconds from the first frame; empty bins are frames without hits or missing frames) and an occupancy heatmap of hits per ROC and payload port. Grey cells are ports the ROC's 0x41 map does not list.
 
 ![File-level plots](images/web_viewer_plots_file.png)
 
-**Per ROC:** one block per crate with its board × channel occupancy map, hit rate over time, charge spectrum and hit time within the frame. All maps share one color scale, and charts of the same kind share one y-axis, so crates can be compared directly.
+**Per ROC:** pick a ROC (or click a cell in the occupancy map): its port × channel occupancy, hit rate over time, charge spectrum and hit time within the frame.
 
 ![Per-ROC plots](images/web_viewer_plots_roc.png)
 
-**Per channel:** pick ROC → port → channel, step with Prev / Next, or click a cell in a ROC map.
+**Per channel:** pick port and channel, step with Prev / Next, or click a cell in the ROC map.
 
 ![Per-channel plots](images/web_viewer_plots_channel.png)
 
+### Records
+
+A paged table of the record headers: offset, size, events declared and found, header type, compression, last-record bit, index, truncation, header quirks and walk errors. Click a row to open the record in the Structure tab.
+
+![Records tab](images/web_viewer_records.png)
+
 ### Structure
 
-A collapsible tree, 100 records per page, with jump-to-record. Each node shows its decoded fields and raw words.
+The tree pyevio builds: file → records → events → banks and segments → hit words, loaded as nodes are expanded (pages of 500 children). Inside a stream frame the nodes are labeled by role: stream info with its time-slice and aggregation-info (AIS) segments, ROC banks with ROC id and stream, ROC stream info with the payload-port map (its entries decoded by pyevio), payload banks with port, module and hit count. Selecting a node shows its header fields and its raw words; events of LZ4 or gzip records are read from the decompressed record buffer.
 
 ![Structure tab](images/web_viewer_structure.png)
 
-## Data format assumed
+## Data format
 
-```
-Record (header 14 w) → Event 0xFF60 (built time frame, 65,536 ns)
-  ├─ 0xFF31 stream info: segment 0x32 = frame, timestamp; segment 0x42 = ROC list
-  └─ ROC bank (tag = ROC id)
-       ├─ 0xFF30 ROC stream info: segment 0x31 = frame, timestamp; segment 0x41 = payload ports
-       └─ payload bank (tag = port): length 1 → empty; length 1+N → N hit words
-hit word: t = bits[30:17] × 4 ns, ch = bits[16:13], q = bits[12:0]
-```
-
-The hit-word layout was inferred from the data and checked for consistency, not taken from a spec. The Overview tab warns if a file breaks those checks. Compressed (LZ4/gzip) records are skipped in the browser and reported.
+The stream format (0xFF60 built time frames, 0xFF31/0xFF30 stream-info banks, the 0x41 payload-port map, the hit word `t = bits[30:17] × 4 ns, ch = bits[16:13], q = bits[12:0]`) is decoded in one place, `pyevio/decoders/fadc250_stream.py`; the viewer holds no copy of it. See [stream_decoding.md](stream_decoding.md).
 
 ## Convert to Parquet
 
