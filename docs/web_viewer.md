@@ -24,7 +24,7 @@ Only files under ROOT (the folder given on the command line, default the current
 
 ### Analysis and cache
 
-Opening a file starts one analysis job on the server (`pyevio stats` on all cores minus two, or `--workers N`); the page shows its progress and the estimated time to completion. Opening another file cancels the running job. Results are cached as `.npz` under `~/.cache/pyevio/stats` (or `--cache-dir DIR`), keyed by the file path, size, modification time and the statistics version, so a second open of an unchanged file is immediate. The cache folder can be deleted at any time.
+Opening a file starts one analysis job on the server (`pyevio stats` on all cores minus two, or `--workers N`); the page shows its progress and the estimated time to completion. Opening another file cancels the running job. Results are cached as `.npz` under `~/.cache/pyevio/stats` (or `--cache-dir DIR`), keyed by the file path, size and modification time, so a second open of an unchanged file is immediate. An entry written by an older statistics version is recomputed and overwritten in place, so a pyevio upgrade leaves no stale files behind. The cache folder can be deleted at any time.
 
 ### Files on a remote machine
 

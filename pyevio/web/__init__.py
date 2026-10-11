@@ -11,7 +11,7 @@ Modules, one job each:
 - ``app``: the FastAPI factory, logging and ``serve()``.
 - ``auth``: Host check, token check and path confinement to ROOT.
 - ``jobs``: opened files, the analysis job thread and its progress.
-- ``cache``: ``.npz`` result cache keyed by path, size, mtime and stats version.
+- ``cache``: ``.npz`` result cache keyed by path, size and mtime; an entry of another stats version is recomputed in place.
 - ``structure``: tree nodes, record pages and raw words from pyevio core.
 - ``report``: summary and histogram JSON from ``StreamStats``.
 - ``routes``: the ``/api`` endpoints.

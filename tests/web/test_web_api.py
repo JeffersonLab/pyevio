@@ -219,6 +219,26 @@ def test_second_open_is_a_cache_hit(client, served_root, monkeypatch):
     assert second.get(f"/api/files/{file_id}/summary").json()["stats"]["cached"] is True
 
 
+def test_stale_cache_entry_is_recomputed_in_place(client, served_root, monkeypatch):
+    """F60: the key leaves the stats version out, so an old entry is overwritten, never orphaned."""
+    from pyevio.web.cache import StatsCache, cache_key
+
+    path = served_root["root"] / served_root["synthetic"]
+    key = cache_key(path.resolve())
+    stale = stream_stats.compute_stream_stats(str(path), workers=1)
+    stale.version = "1"
+    StatsCache(served_root["cache_dir"]).save(key, stale)
+    assert StatsCache(served_root["cache_dir"]).load(key) is None  # a miss, not an exception
+
+    calls = []
+    real_compute = stream_stats.compute_stream_stats
+    monkeypatch.setattr(jobs, "compute_stream_stats", lambda p, **kw: calls.append(p) or real_compute(p, **kw))
+    file_id, _ = open_and_wait(client, served_root["synthetic"])
+    assert key.startswith(file_id) and len(calls) == 1
+    cached_files = list(served_root["cache_dir"].glob("*.npz"))
+    assert len(cached_files) == 1 and stream_stats.StreamStats.load(str(cached_files[0])).version == stream_stats.STATS_VERSION
+
+
 def test_opening_another_file_cancels_the_running_job(client, served_root, monkeypatch):
     def blocking_compute(path, workers=None, progress=None, cancel=None, **_):
         """Blocks on the synthetic file until cancelled; any other file computes for real."""
