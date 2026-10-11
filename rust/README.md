@@ -1,9 +1,11 @@
 # evio-stream: a streaming EVIO v6 reader in Rust
 
-`rust/evio-stream` is a read-only, streaming reader for the files pyevio
-reads, written against the same format references
-(`docs/evio6_file_structure.md`, `docs/stream_decoding.md`) and checked
-against the same rulers. It is a library with two command-line tools.
+`rust/` is a cargo workspace of two crates: `evio-stream`, a read-only,
+streaming reader for the files pyevio reads, written against the same
+format references (`docs/evio6_file_structure.md`,
+`docs/stream_decoding.md`) and checked against the same rulers, a library
+with two command-line tools; and `evio-tui`, a minimal terminal viewer on
+top of it (see [evio-tui](#evio-tui-a-minimal-terminal-viewer) below).
 
 What it reads:
 
@@ -92,13 +94,96 @@ words, AIS counts, decode errors, a per-ROC table.
 the bank tree of event M of record N (tag, type, num, length) with the first
 K words of each leaf in hex.
 
+## evio-tui: a minimal terminal viewer
+
+```
+cd rust
+cargo build --release
+target/release/evio-tui FILE
+```
+
+`rust/evio-tui` is a fast way to look inside a file from a terminal,
+nothing more; the rich viewers are the Python ones (`pyevio gui`,
+`pyevio web`). It is built on `ratatui` and `crossterm` (the only
+dependencies beyond `evio-stream`). Three screens, one level deeper each:
+
+- **Records.** A background thread streams the file from the start with
+  `RecordReader` and sends one small summary per record over a channel; the
+  list fills while the scan runs and the interface never waits on the file.
+  One row per record: index, offset, bytes, record or trailer, events
+  declared and found, compression, truncated, error count (rows with errors
+  or a cut tail in red). The side panel (terminals 100 columns and wider)
+  shows every header field of the selected record and the file line
+  (layout, byte order, file type, declared record count, dictionary, first
+  event, trailer index). The status line shows records, events, bytes,
+  seconds and GB/s while the scan runs, then the checks: trailer,
+  `truncated_tail (declared, present, salvaged)`, `bad_record_header`.
+- **Events of a record.** Enter opens the selected record: index, length in
+  words, tag, data type, num, and "stream frame" for tag 0xFF60. One record
+  is in memory at a time.
+- **Bank tree and words of an event.** Enter opens the selected event: one
+  row per bank, segment or tagsegment at every level (kind, tag, type, num,
+  length, total words), a `WalkError` in red where a length was bad. The
+  panel below shows the selected structure's first 64 words in hex, 8 per
+  row with the word offset at the left; `n`/`p` move the window. For a
+  stream frame `f` shows the `FrameDecoder` summary: frame number,
+  timestamp, ROC and payload bank counts, hits, other-module words, AIS, a
+  per-ROC table (module, payload banks, empty, hits, other words), and the
+  decoder's errors (red) and warnings (yellow).
+
+Keys: arrows, PgUp/PgDn, Home/End, `g`/`G` move; Enter (or Right) opens;
+Esc (or Left, Backspace) goes back one level (it closes the frame panel
+first); `n`/`p` next/previous 64 words; `f` frame summary; `?` one-screen
+help; `q` or Ctrl-C quits from anywhere.
+Standard input is not supported: the viewer opens records by seeking to
+their offset, so `evio-tui -` prints a message and exits.
+
+Random access: the library reader is forward-only, but every layout starts
+each record with a record header, so opening a record seeks a fresh file
+handle to the offset noted during the scan and starts a new
+`RecordReader::new` there: a 14-word v6 header is taken for the
+`v6-records` layout, an 8-word SRO block header for `sro-8word`, and the
+first record read is the one wanted. No layout hint and no library change
+were needed; `evio-tui/tests/corpus_access.rs` checks it on the converted
+corpus file and on the raw SRO stream (record 7000 of each, the trailer and
+the cut tail), and `tests/render.rs` draws the screens into ratatui's
+`TestBackend` for the golden files.
+
+Measured on this host, one thread, by the harness in
+`tests/corpus_access.rs` (`--test-threads=1`; the logged run is
+`/data/pyevio/logs/phase6_rust_tui_tests.log`):
+
+- `sro_000791.evio.00000.v6` (15.5 GB, `v6`): scan 1.66 s, 9.35 GB/s with
+  the file in the page cache, 7891 records + trailer (the list has one row
+  per record, the trailer included, and the status line names the trailer
+  separately so the count matches `evio-count`), 86,794 events; the first
+  record message arrives 1 ms after the thread starts; record 7000 (offset
+  0x3364DC560, 1.9 MB, 11 stream frames) opens in 0.3 ms.
+- Raw `sro_000791.evio.00000` (15.5 GB, `sro-8word`): 7893 records (the cut
+  tail included), 86,794 events, `truncated_tail (1967400, 531760, 2)`;
+  record 7000 (offset 0x33610BA10) opens in 0.4 ms; the cut tail opens with
+  its 2 salvaged events. The scan took 1.59 s (9.80 GB/s) with the file in
+  the page cache and 4.97 s (3.13 GB/s) in the logged run, where part of it
+  had been evicted by the scans before it.
+
+Opening a record is a seek plus one record read, so it costs the same at
+record 0 and at record 7000; a 64 MB gzip record would take as long as its
+decompression.
+
+Code layout: `scan` (the thread and its messages), `access` (seek and read
+one record), `state` (what is shown and selected, the keys), `format` (the
+text of every cell and panel), `tree` (the flattened bank tree), `ui` (the
+only module that draws). Everything but `ui` runs without a terminal, and
+the state machine is what the tests drive.
+
 ## Rulers and tests
 
 ```
-cd rust/evio-stream
-cargo test --release                    # unit tests + the golden manifest
+cd rust
+cargo test --release --workspace        # both crates: unit, golden, render, corpus harness
+cargo fmt --all --check && cargo clippy --all-targets -- -D warnings
+cd evio-stream
 EVIO_CORPUS=1 cargo test --release --test corpus -- --nocapture   # 140 GB, minutes
-cargo fmt --check && cargo clippy --all-targets -- -D warnings
 ```
 
 - Golden set (`tests/golden.rs`, `tests/data/golden_manifest.tsv` generated
@@ -127,7 +212,8 @@ cargo fmt --check && cargo clippy --all-targets -- -D warnings
   `Record.errors`; it is the expected trace of the truncation, not a defect.
 
 Logs of the last run: `/data/pyevio/logs/phase6_rust_tests.log` and
-`/data/pyevio/logs/phase6_rust_corpus.log`.
+`/data/pyevio/logs/phase6_rust_corpus.log`; the workspace run with
+evio-tui: `/data/pyevio/logs/phase6_rust_tui_tests.log`.
 
 ## Speed (one thread)
 
@@ -148,7 +234,8 @@ Measured on this host (24 cores, 62 GB) with the raw file
 
 ## Not included
 
-Writing, random access by record index (the reader is forward-only),
+Writing, random access by record index in the library (the reader is
+forward-only; evio-tui seeks to offsets it noted in its own scan),
 dictionaries and composite data decoding (the bytes are exposed, not
 parsed), and the statistics layer of `pyevio.stream_stats`.
 
