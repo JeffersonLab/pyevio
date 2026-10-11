@@ -112,3 +112,24 @@ def test_debug_command_labels_offsets_of_a_compressed_record(tmp_path):
     result = run(["debug", plain, "--record", "0"])
     assert result.exit_code == 0, result.output
     assert NOTE not in result.output
+
+
+def test_event_command_names_the_record_of_a_global_index(tmp_path):
+    """``pyevio event N`` by global index prints the record the event lives in (F53)."""
+    _, plain = compressed_and_plain_files(tmp_path)
+    result = run(["event", plain, "1", "--hexdump"])
+    assert result.exit_code == 0, result.output
+    assert "Record #0 Event #1" in result.output
+    assert "Record #None" not in result.output
+    assert "Record #0 Event rel#1, Length: 20 bytes\n" in result.output
+
+
+def test_dump_record_out_of_range_is_a_parameter_error(tmp_path):
+    """``pyevio dump --record R`` past the last record exits 2 with the range message (F54)."""
+    _, plain = compressed_and_plain_files(tmp_path)
+    result = run(["dump", plain, "--record", "7"])
+    assert result.exit_code == 2
+    assert "Record 7 out of range (0-0)" in result.stderr
+
+    result = run(["dump", plain, "--record", "0", "2"])
+    assert result.exit_code == 0, result.output

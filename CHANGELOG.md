@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to pyevio are listed here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Finding numbers (F1—F52) refer to the project's defect ledger.
+All notable changes to pyevio are listed here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Finding numbers (F1—F54) refer to the project's defect ledger.
 
 ## [Unreleased]
 
@@ -71,4 +71,6 @@ All notable changes to pyevio are listed here. The format follows [Keep a Change
 - F50 — `pyevio event` and `pyevio debug` printed the offsets of a compressed record as if they were file offsets; a note names them as offsets in the decompressed record buffer, and `pyevio event --hexdump` reads the event from that buffer.
 - F51 — `pyevio --version` printed 0.1.0; it prints `pyevio.__version__`.
 - F52 — the `pyevio FILE` shortcut for `pyevio info FILE` never ran (click resolves the command name first); the dead branch is removed and `pyevio` with no arguments prints the help.
+- F53 — `pyevio event N` by global index printed `Record #None`; it prints the record the event lives in.
+- F54 — `pyevio dump --record R` with R out of range printed the message and exited 0; it is a parameter error (exit code 2). The `--hexdump` title of `pyevio event` lost a stray `)`.
 - Files that set the last-record bit on every record showed 1 record and 0 events; the scan continues while another record header follows, and records without an event index are walked by the length word of each event bank. (Fixed before the defect ledger existed; no finding number.)

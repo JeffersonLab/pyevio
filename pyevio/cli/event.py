@@ -46,7 +46,7 @@ def display_event(console, evio_file, record_obj, event_obj, record_idx,
             event_obj.mm,
             event_obj.offset,
             event_obj.length // 4,  # Convert bytes to words
-            f"Record #{record_idx} Event rel#{event_obj.index}, Length: {event_obj.length} bytes)"
+            f"Record #{record_idx} Event rel#{event_obj.index}, Length: {event_obj.length} bytes"
         )
         console.print()
 
@@ -100,7 +100,7 @@ def event_command(ctx, filename, event_index, record_index, hexdump, verbose):
                 evio_file,
                 record,
                 event,
-                record_index,
+                record.index,
                 hexdump=hexdump,
                 verbose=verbose
             )
