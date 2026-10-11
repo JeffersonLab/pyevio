@@ -432,7 +432,7 @@ class _Walk:
                 self.error(event_index, segment_i, f"SIB segment length {segment_len} runs past the SIB end {sib_end}")
                 return 0, 0
             if (header >> 24) == SIB_AIS_SEGMENT_TAG:
-                return segment_len, int(np.unique(w[segment_i + 1:segment_end]).size)
+                return segment_len, len(set(w[segment_i + 1:segment_end].tolist()))  # a set beats np.unique on 24 words
             segment_i = segment_end
         return 0, 0
 
