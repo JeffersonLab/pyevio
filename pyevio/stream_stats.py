@@ -174,7 +174,9 @@ class Accumulator:
 
     ARRAYS_3D = ("rate", "charge", "time")  # (roc, port, channel, bins)
     ARRAYS_2D = ("empty_banks", "non_fadc_words_per_port")  # (roc, port)
-    AIS_TOTALS = ("frames_with_ais", "frames_with_degenerate_ais")  # counted from the frame table, not StreamHits attributes
+    # Totals summed from the StreamHits attribute of the same name; n_frames and the AIS totals are added apart.
+    HITS_TOTALS = ("n_events", "n_other_events", "n_hits", "n_payload_banks", "n_empty_payload_banks",
+                   "n_unmapped_payload_banks", "n_payload_words", "non_fadc_words", "n_flag_words", "errors")
 
     def __init__(self, t_first: int, t_last: int, n_rate_bins: int):
         self.t_first, self.t_last, self.n_rate_bins = int(t_first), int(t_last), int(n_rate_bins)
@@ -188,10 +190,7 @@ class Accumulator:
         self.module_id = np.full((0, 0), fs.MODULE_UNKNOWN, dtype=np.uint8)
         self.words_per_module = {}  # module id → payload words (fADC250 hits count as words)
         self.frame_rows = []  # FRAME_STATS_DTYPE arrays, concatenated at the end
-        self.totals = {name: 0 for name in ("n_events", "n_frames", "n_other_events", "n_hits", "n_payload_banks",
-                                            "n_empty_payload_banks", "n_unmapped_payload_banks", "n_payload_words",
-                                            "non_fadc_words", "n_flag_words", "errors",
-                                            "frames_with_ais", "frames_with_degenerate_ais")}
+        self.totals = {name: 0 for name in self.HITS_TOTALS + ("n_frames", "frames_with_ais", "frames_with_degenerate_ais")}
         self.error_messages: List[str] = []
 
     def _grow(self, rocs: np.ndarray, ports: np.ndarray) -> None:
@@ -261,14 +260,11 @@ class Accumulator:
         for name in FRAME_STATS_DTYPE.names:
             frame_rows[name] = hits.frames[name]
         self.frame_rows.append(frame_rows)
-        # The AIS totals come from the frame table; the other totals are StreamHits attributes of the same name.
+        for name in self.HITS_TOTALS:
+            self.totals[name] += getattr(hits, name)
+        self.totals["n_frames"] += hits.n_stream_frames
         self.totals["frames_with_ais"] += int(np.count_nonzero(hits.frames["n_ais_entries"]))
         self.totals["frames_with_degenerate_ais"] += int(np.count_nonzero(fs.ais_degenerate_mask(hits.frames)))
-        for name in self.totals:
-            if name == "n_frames":
-                self.totals[name] += hits.n_stream_frames
-            elif name not in self.AIS_TOTALS:
-                self.totals[name] += getattr(hits, name)
         self.error_messages = (self.error_messages + hits.error_messages)[:MAX_ERROR_MESSAGES]
 
     def merge(self, other: "Accumulator") -> None:
