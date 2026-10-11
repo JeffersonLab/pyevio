@@ -10,7 +10,7 @@ from PIL import Image
 import matplotlib.pyplot as plt
 from datetime import datetime
 
-from pyevio.display import create_bank_tree
+from pyevio.display import create_bank_tree, offset_scope_note
 from pyevio.evio_file import EvioFile
 from pyevio.roc_time_slice_bank import RocTimeSliceBank
 from pyevio.utils import make_hex_dump, print_offset_hex
@@ -32,13 +32,18 @@ def display_event(console, evio_file, record_obj, event_obj, record_idx,
     """
     # Display event header information
     console.print(f"[bold]Record #{record_idx} Event #{event_obj.index}[/bold]")
+    note = offset_scope_note(record_obj)
+    if note:
+        console.print(note)
     console.print(f"[bold]Offset: [green]0x{event_obj.offset:X}[{event_obj.offset//4}][/green], Length: [green]{event_obj.length}[/green] bytes[/bold]")
 
-    # Show hexdump of the full event if requested
+    # Show hexdump of the full event if requested. The event's buffer is the
+    # file for an uncompressed record and the decompressed bytes otherwise;
+    # event_obj.offset is valid only in that buffer.
     if hexdump:
         console.print()
         print_offset_hex(
-            evio_file.mm,
+            event_obj.mm,
             event_obj.offset,
             event_obj.length // 4,  # Convert bytes to words
             f"Record #{record_idx} Event rel#{event_obj.index}, Length: {event_obj.length} bytes)"
