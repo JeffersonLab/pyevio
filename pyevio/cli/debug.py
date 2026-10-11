@@ -111,7 +111,8 @@ def display_child_banks(console, parent_bank, evio_file, verbose, hexdump, level
 
                     # Show length details for better debugging
                     console.print(f"[dim]Length: {child.length} words, Data Length: {child.data_length} bytes[/dim]")
-                    console.print(f"[dim]Offset Range: 0x{child.offset:X} - 0x{child.offset + (child.length * 4):X}[/dim]")
+                    # The length word counts the words after it: a bank spans (length + 1) words.
+                    console.print(f"[dim]Offset Range: 0x{child.offset:X} - 0x{child.offset + (child.length + 1) * 4:X}[/dim]")
 
                     if not child.is_container():
                         display_data_bank(console, child, evio_file, hexdump)
@@ -254,23 +255,31 @@ def display_stream_frame(console, evio_file, event_obj):
     frame = fadc250_stream.decode_frame(words)
     console.print(f"[bold]Streaming time frame {frame.frame_number}[/bold], timestamp {frame.timestamp}, "
                   f"{frame.n_hits} hits in {frame.n_roc_banks} ROC banks, "
-                  f"{frame.n_payload_banks} payload banks ({frame.n_empty_payload_banks} empty)")
+                  f"{frame.n_payload_banks} payload banks ({frame.n_empty_payload_banks} empty), "
+                  f"{frame.non_fadc_words} words of other modules")
     for message in frame.error_messages:
         console.print(f"[red]Decode error: {message}[/red]")
 
+    module_names = {fadc250_stream.MODULE_FADC250: "fADC250", fadc250_stream.MODULE_DCRB: "DCRB",
+                    fadc250_stream.MODULE_UNKNOWN: "unmapped"}
     roc_table = Table(box=box.SIMPLE)
     roc_table.add_column("ROC", style="cyan")
     roc_table.add_column("Stream", style="green")
+    roc_table.add_column("Module", style="white")
     roc_table.add_column("Payload banks", style="blue")
     roc_table.add_column("Empty", style="yellow")
     roc_table.add_column("Hits", style="magenta")
+    roc_table.add_column("Other words", style="magenta")
     roc_table.add_column("Ports", style="white")
     for roc_bank in frame.roc_banks:
+        same_bank = lambda table: table[(table["roc"] == roc_bank["roc"]) & (table["stream"] == roc_bank["stream"])]
         hit_slice = slice(int(roc_bank["first_hit_index"]), int(roc_bank["first_hit_index"] + roc_bank["n_hits"]))
-        empties = frame.empty_banks[(frame.empty_banks["roc"] == roc_bank["roc"]) & (frame.empty_banks["stream"] == roc_bank["stream"])]
-        ports = sorted(set(frame.port[hit_slice].tolist()) | set(empties["port"].tolist()))
-        roc_table.add_row(str(roc_bank["roc"]), str(roc_bank["stream"]), str(roc_bank["n_payload_banks"]),
-                          str(roc_bank["n_empty_payload_banks"]), str(roc_bank["n_hits"]), ", ".join(map(str, ports)))
+        ports = sorted(set(frame.port[hit_slice].tolist()) | set(same_bank(frame.empty_banks)["port"].tolist())
+                       | set(same_bank(frame.non_fadc_banks)["port"].tolist()))
+        module_id = int(roc_bank["module_id"])
+        roc_table.add_row(str(roc_bank["roc"]), str(roc_bank["stream"]), module_names.get(module_id, str(module_id)),
+                          str(roc_bank["n_payload_banks"]), str(roc_bank["n_empty_payload_banks"]), str(roc_bank["n_hits"]),
+                          str(roc_bank["non_fadc_words"]), ", ".join(map(str, ports)))
     console.print(roc_table)
 
 
