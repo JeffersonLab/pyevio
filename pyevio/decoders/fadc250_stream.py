@@ -127,6 +127,25 @@ def event_words(mm, offset: int, length: int, endian: str) -> np.ndarray:
     return np.frombuffer(mm, dtype=np.dtype(endian + "u4"), count=length // 4, offset=offset)
 
 
+def payload_map_entries(data_words, pad: int, big_endian: bool) -> list:
+    """``[(port, module id)]`` from the data words of a 0x41 payload-port segment, in entry order.
+
+    Entries are uint16, two per word: the low half first in a little-endian file, the
+    high half first in a big-endian one. Pad bits 2 in the segment header mean an odd
+    entry count. Entries with port 0 stay in the list — the caller decides whether a zero
+    entry is a map slot (the decoder skips it, the viewer shows it).
+    """
+    n_entries = 2 * len(data_words) - (1 if pad == 2 else 0)
+    entries = []
+    for entry_i in range(n_entries):
+        word = int(data_words[entry_i // 2])
+        first_half = (word >> 16) if big_endian else (word & 0xFFFF)
+        second_half = (word & 0xFFFF) if big_endian else (word >> 16)
+        entry = first_half if entry_i % 2 == 0 else second_half
+        entries.append((entry & MAP_PORT_MASK, (entry >> MAP_MODULE_SHIFT) & MAP_MODULE_MASK))
+    return entries
+
+
 def unpack_hit_words(hit_words: np.ndarray):
     """Split hit words into ``(channel, time_raw, charge)`` columns.
 
@@ -392,15 +411,10 @@ class _Walk:
                 self.error(event_index, segment_i, f"stream-info segment length {segment_len} runs past the bank end {info_end}")
                 break
             if (header >> 24) == ROC_PAYLOAD_PORT_SEGMENT_TAG:
-                n_entries = 2 * segment_len - (1 if ((header >> 22) & 0x3) == 2 else 0)
-                for entry_i in range(n_entries):
-                    word = read(segment_i + 1 + entry_i // 2)
-                    first_half = (word >> 16) if big_endian else (word & 0xFFFF)
-                    second_half = (word & 0xFFFF) if big_endian else (word >> 16)
-                    entry = first_half if entry_i % 2 == 0 else second_half
-                    port = entry & MAP_PORT_MASK
+                data_words = [read(segment_i + 1 + word_i) for word_i in range(segment_len)]
+                for port, module in payload_map_entries(data_words, (header >> 22) & 0x3, big_endian):
                     if port:
-                        port_map[port] = (entry >> MAP_MODULE_SHIFT) & MAP_MODULE_MASK
+                        port_map[port] = module
                 break
             segment_i = segment_end
         return port_map

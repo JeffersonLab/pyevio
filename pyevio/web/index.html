@@ -1,693 +1,120 @@
 <!doctype html>
-<html lang="en"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>EVIO Stream Viewer</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
-<style>
-/* Layout: app bar (open file + folder browser) → status strip → tabs (Overview / Plots: file → ROC → channel / Structure), one column, tree uses two panes */
-:root {
-  --bg: #f6f6f3; --surface: #fcfcfb; --line: #e3e2dc; --grid: #ecebe6; --hover: #efeee9; --sel: #dbe8fa;
-  --fg: #0b0b0b; --fg2: #52514e; --fg3: #7a7974;
-  --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a; --q0: #f0efec; --dead: #b9b8b1; --hdr: #fde8d5;
-  --c-file: #52514e; --c-rec: #4a3aa7; --c-bank: #1c5cab; --c-seg: #0f7a55; --c-data: #b4500f;
-  --good: #0ca30c; --warn: #fab219; --crit: #d03b3b;
-  --sans: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
-  --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
-}
-@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
-  --bg: #121211; --surface: #1a1a19; --line: #33332f; --grid: #2a2a27; --hover: #252523; --sel: #1d3556;
-  --fg: #ffffff; --fg2: #c3c2b7; --fg3: #8f8e86;
-  --s1: #3987e5; --s2: #d95926; --s3: #199e70; --q0: #2a2a27; --dead: #5a5953; --hdr: #4a2c16;
-  --c-file: #c3c2b7; --c-rec: #9085e9; --c-bank: #6da7ec; --c-seg: #3cc495; --c-data: #f08a52; color-scheme: dark } }
-:root[data-theme="dark"] {
-  --bg: #121211; --surface: #1a1a19; --line: #33332f; --grid: #2a2a27; --hover: #252523; --sel: #1d3556;
-  --fg: #ffffff; --fg2: #c3c2b7; --fg3: #8f8e86;
-  --s1: #3987e5; --s2: #d95926; --s3: #199e70; --q0: #2a2a27; --dead: #5a5953; --hdr: #4a2c16;
-  --c-file: #c3c2b7; --c-rec: #9085e9; --c-bank: #6da7ec; --c-seg: #3cc495; --c-data: #f08a52; color-scheme: dark }
-body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.5 var(--sans); }
-.wrap { max-width: 1240px; margin: 0 auto; padding-inline: 16px; padding-block: 20px 48px; display: grid; gap: 16px; }
-h1 { font-size: 20px; margin: 0; font-weight: 600; }
-h2 { font-size: 15px; margin: 0; font-weight: 600; }
-code { font-family: var(--mono); font-size: .9em; }
-.bar { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
-.bar .grow { flex: 1; }
-.btn { font: 500 13px var(--sans); background: var(--s1); color: #fff; border: 0; border-radius: 6px; padding: 7px 14px; cursor: pointer; }
-.btn.ghost { background: transparent; color: var(--fg); border: 1px solid var(--line); }
-.btn:hover { filter: brightness(1.08); } .btn.ghost:hover { background: var(--hover); filter: none; }
-.btn:focus-visible, .tab:focus-visible, select:focus-visible, input:focus-visible { outline: 2px solid var(--s1); outline-offset: 2px; }
-select, input[type=number] { font: 13px var(--sans); background: var(--surface); color: var(--fg); border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; }
-.drop { border: 1.5px dashed var(--line); border-radius: 8px; padding: 10px 14px; color: var(--fg2); font-size: 13px; }
-body.dragging .drop { border-color: var(--s1); background: var(--sel); }
-.browser { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; display: grid; min-width: 0; }
-.browser .bh { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; padding: 10px 12px; border-bottom: 1px solid var(--line); }
-.browser .bh input[type=text] { flex: 1; min-width: 0; font: 13px var(--mono); background: var(--bg); color: var(--fg); border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; }
-.browser .bh label.chk { font-size: 12.5px; color: var(--fg2); display: flex; gap: 4px; align-items: center; }
-.blist { max-height: 300px; overflow: auto; padding: 4px; font: 13px var(--mono); }
-.bitem { display: flex; gap: 10px; align-items: baseline; width: 100%; text-align: left; background: none; border: 0; color: var(--fg); font: inherit; padding: 4px 8px; border-radius: 4px; cursor: pointer; }
-.bitem:hover { background: var(--hover); } .bitem:focus-visible { outline: 2px solid var(--s1); outline-offset: -2px; }
-.bitem .bk { font-size: 10.5px; padding: 0 5px; border-radius: 3px; border: 1px solid currentColor; flex: none; }
-.bitem.dir .bk { color: var(--c-rec); } .bitem.file .bk { color: var(--c-bank); }
-.bitem .bn { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } .bitem .bs { color: var(--fg3); flex: none; }
-.bempty { padding: 10px 12px; color: var(--fg3); font-family: var(--sans); font-size: 13px; }
-.status { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 10px 14px; display: grid; gap: 6px; }
-.status .file { font: 500 14px var(--mono); overflow-wrap: anywhere; }
-.status .msg { color: var(--fg2); font-size: 13px; }
-.status .err { color: var(--crit); font-size: 13px; }
-.prog { height: 4px; background: var(--grid); border-radius: 2px; overflow: hidden; }
-.prog i { display: block; height: 100%; background: var(--s1); width: 0; transition: width .1s; }
-.tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); overflow-x: auto; }
-.tab { font: 500 14px var(--sans); background: none; border: 0; border-bottom: 2px solid transparent; color: var(--fg2); padding: 8px 12px; cursor: pointer; white-space: nowrap; }
-.tab[aria-selected="true"] { color: var(--fg); border-bottom-color: var(--s1); }
-.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; }
-.tile { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; }
-.tile .v { font: 500 21px var(--mono); font-variant-numeric: tabular-nums; }
-.tile .k { color: var(--fg2); font-size: 13px; }
-.panel { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 16px; min-width: 0; display: grid; gap: 10px; align-content: start; }
-.panel p { margin: 0; color: var(--fg2); font-size: 13.5px; }
-h3 { font-size: 14px; margin: 0; font-weight: 600; }
-#v-plots { gap: 32px; }
-.level { display: grid; gap: 14px; min-width: 0; }
-.level + .level { border-top: 1px solid var(--line); padding-top: 24px; }
-.lh { display: flex; gap: 12px; align-items: flex-start; }
-.lh p { margin: 2px 0 0; color: var(--fg2); font-size: 13.5px; max-width: 80ch; }
-.lnum { font: 600 13px var(--mono); width: 24px; height: 24px; border-radius: 50%; border: 1.5px solid var(--s1); color: var(--s1); display: grid; place-items: center; flex: none; margin-top: 1px; }
-.grid3 { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr)); gap: 16px 20px; }
-.cell { display: grid; gap: 4px; align-content: start; min-width: 0; }
-.cell .sub { font-size: 12.5px; color: var(--fg3); }
-.rocstats { display: flex; flex-wrap: wrap; gap: 4px 18px; font: 12.5px var(--mono); color: var(--fg2); font-variant-numeric: tabular-nums; }
-.rocstats b { color: var(--fg); font-weight: 500; }
-.chsel { display: flex; gap: 8px 14px; flex-wrap: wrap; align-items: center; font-size: 13px; color: var(--fg2); }
-.chsel label { display: flex; gap: 6px; align-items: center; }
-.grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 440px), 1fr)); gap: 16px; }
-.view { display: grid; gap: 16px; }
-.checks { display: grid; gap: 8px; }
-.ck { display: grid; grid-template-columns: 22px 1fr; gap: 8px; font-size: 14px; }
-.ico { font: 600 12px var(--mono); width: 20px; height: 20px; border-radius: 50%; display: grid; place-items: center; color: #fff; margin-top: 1px; }
-.ico.ok { background: var(--good); } .ico.w { background: var(--warn); color: #0b0b0b; } .ico.x { background: var(--crit); }
-.ck .d { color: var(--fg2); }
-ul.find { margin: 0; padding-left: 18px; color: var(--fg2); display: grid; gap: 4px; }
-ul.find b { color: var(--fg); font-weight: 500; }
-.legend { display: flex; gap: 16px; flex-wrap: wrap; font-size: 13px; color: var(--fg2); }
-.sw { display: inline-block; width: 12px; height: 3px; border-radius: 2px; vertical-align: middle; margin-right: 6px; }
-.scroll { overflow-x: auto; }
-svg { display: block; overflow: visible; }
-svg text { fill: var(--fg2); font: 11px var(--mono); }
-.scale { display: flex; align-items: center; gap: 8px; font: 11px var(--mono); color: var(--fg2); flex-wrap: wrap; }
-.scale .rb { width: 180px; height: 10px; border-radius: 2px; }
-table.t { border-collapse: collapse; font: 12px var(--mono); font-variant-numeric: tabular-nums; }
-table.t th, table.t td { padding: 3px 6px; text-align: right; border-bottom: 1px solid var(--grid); }
-table.t th { color: var(--fg2); font-weight: 500; }
-details summary { cursor: pointer; color: var(--fg2); font-size: 13px; }
-.tip { position: fixed; pointer-events: none; background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 6px 9px; font: 12px/1.45 var(--mono); color: var(--fg); box-shadow: 0 4px 14px rgb(0 0 0 / .12); z-index: 10; white-space: nowrap; }
-/* structure tab */
-.panes { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); gap: 16px; align-items: start; }
-@media (max-width: 820px) { .panes { grid-template-columns: 1fr; } }
-.pane { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; min-width: 0; }
-.pane-h { padding: 10px 14px; border-bottom: 1px solid var(--line); display: flex; gap: 8px; align-items: center; flex-wrap: wrap; font-size: 13px; color: var(--fg2); }
-#tree { padding: 8px 6px 12px; overflow: auto; max-height: 72vh; font: 12.5px/1.35 var(--mono); }
-.node > .row { display: flex; align-items: baseline; gap: 6px; padding: 2px 6px; border-radius: 4px; cursor: pointer; white-space: nowrap; }
-.node > .row:hover { background: var(--hover); } .node > .row.sel { background: var(--sel); }
-.node > .row:focus-visible { outline: 2px solid var(--c-bank); outline-offset: -2px; }
-.tw { width: 12px; flex: none; color: var(--fg3); text-align: center; }
-.kind { font-size: 10.5px; padding: 0 5px; border-radius: 3px; border: 1px solid currentColor; flex: none; }
-.k-file { color: var(--c-file); } .k-rec { color: var(--c-rec); } .k-bank { color: var(--c-bank); } .k-seg { color: var(--c-seg); } .k-data { color: var(--c-data); } .k-hit { color: var(--fg3); }
-.nm { color: var(--fg); font-family: var(--sans); font-size: 13px; } .meta { color: var(--fg3); }
-.kids { margin-left: 11px; padding-left: 10px; border-left: 1px solid var(--line); }
-#detail { padding: 14px; display: grid; gap: 12px; }
-#detail .path { font: 11.5px var(--mono); color: var(--fg3); overflow-wrap: anywhere; }
-#detail p { margin: 0; color: var(--fg2); font-size: 13.5px; }
-.fields { border-collapse: collapse; font: 12.5px var(--mono); width: 100%; }
-.fields td { padding: 3px 8px 3px 0; border-bottom: 1px solid var(--line); vertical-align: top; }
-.fields td:first-child { color: var(--fg2); font-family: var(--sans); white-space: nowrap; }
-.hex { font: 12px/1.6 var(--mono); display: grid; grid-template-columns: auto repeat(4, auto); gap: 0 10px; justify-content: start; overflow-x: auto; }
-.hex .a { color: var(--fg3); } .hex .h { background: var(--hdr); border-radius: 3px; padding: 0 2px; }
-.small { font-size: 12px; color: var(--fg3); }
-</style>
-</head><body>
-
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>pyevio web viewer</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
 <div class="wrap">
-  <div class="bar">
-    <h1>EVIO Stream Viewer</h1><span class="grow"></span>
-    <button class="btn ghost" id="browseBtn" type="button" hidden aria-expanded="false" aria-controls="browser">Browse folders</button>
-    <label class="btn" for="fileIn" tabindex="0" id="openLbl">Open .evio file</label>
-    <input type="file" id="fileIn" accept=".evio,.dat,*/*" hidden>
-  </div>
-  <div class="drop">Drop an <code>.evio</code> file anywhere on this page. It is decoded in your browser and never uploaded. EVIO v6 with CODA streaming fADC250 data (0xFF60 time frames) gets full plots; any other EVIO v6 file shows the structure tree.</div>
-  <section class="browser" id="browser" hidden aria-label="Folder browser">
+  <header class="bar">
+    <h1>pyevio viewer</h1>
+    <span class="grow"></span>
+    <button class="btn" id="browseBtn" type="button" aria-expanded="true" aria-controls="browser">Open file</button>
+  </header>
+
+  <section class="browser" id="browser" aria-label="Folder browser">
     <div class="bh">
       <button class="btn ghost" id="brUp" type="button" aria-label="Parent folder">↑ Up</button>
-      <input type="text" id="brPath" aria-label="Folder path" spellcheck="false">
-      <button class="btn ghost" id="brGo" type="button">Go</button>
-      <label class="chk" for="brAll"><input type="checkbox" id="brAll"> all files</label>
+      <span class="path" id="brPath">/</span>
+      <label><input type="checkbox" id="brAll"> all files</label>
     </div>
     <div class="blist" id="brList"></div>
   </section>
+
   <section class="status" aria-live="polite">
-    <div class="file" id="stFile">No file selected</div>
+    <div class="file" id="stFile">No file open</div>
     <div class="prog" id="prog" hidden><i></i></div>
-    <div class="msg" id="stMsg">Click <b>Open .evio file</b> or drag a file onto this page. When started with <code>pyevio web</code>, you can also pick a file from any folder with <b>Browse folders</b>.</div>
+    <div class="msg" id="stMsg">Pick a file in the folder browser. The server reads and analyzes it; this page shows the result.</div>
+    <div class="err" id="stErr" hidden></div>
   </section>
 
-  <div id="app" hidden style="display:grid;gap:16px">
-  <nav class="tabs" role="tablist">
-    <button class="tab" role="tab" data-v="overview" aria-selected="true" type="button">Overview</button>
-    <button class="tab" role="tab" data-v="plots" aria-selected="false" type="button">Plots</button>
-    <button class="tab" role="tab" data-v="structure" aria-selected="false" type="button">Structure</button>
+  <nav class="tabs" role="tablist" id="tabs">
+    <button class="tab" role="tab" data-tab="overview" aria-selected="true" type="button" disabled>Overview</button>
+    <button class="tab" role="tab" data-tab="plots" aria-selected="false" type="button" disabled>Plots</button>
+    <button class="tab" role="tab" data-tab="records" aria-selected="false" type="button" disabled>Records</button>
+    <button class="tab" role="tab" data-tab="structure" aria-selected="false" type="button" disabled>Structure</button>
   </nav>
 
-  <section class="view" id="v-overview">
+  <section class="view" id="v-overview" hidden>
     <div class="tiles" id="tiles"></div>
     <div class="grid2">
+      <section class="panel"><h2>What stands out</h2><ul class="find" id="standout"></ul></section>
       <section class="panel"><h2>File checks</h2><div class="checks" id="checks"></div></section>
-      <section class="panel"><h2>What stands out</h2><ul class="find" id="find"></ul></section>
     </div>
+    <div class="grid2">
+      <section class="panel"><h2>File</h2><table class="fields" id="fileFacts"></table></section>
+      <section class="panel"><h2>Records and frames</h2><table class="fields" id="recordFacts"></table></section>
+    </div>
+    <section class="panel"><h2>ROCs</h2><div class="scroll"><table class="t" id="rocTable"></table></div></section>
   </section>
 
   <section class="view" id="v-plots" hidden>
-    <section class="level" aria-labelledby="l1h">
-      <div class="lh"><span class="lnum" aria-hidden="true">1</span><div><h2 id="l1h">File</h2><p id="l1sub"></p></div></div>
+    <div class="grid2">
+      <section class="panel"><h3>Hits per frame</h3><p id="hpfSub"></p><svg class="chart" id="chartHitsPerFrame"></svg></section>
+      <section class="panel"><h3>Total hit rate over time</h3><p id="rateSub"></p><svg class="chart" id="chartRate"></svg></section>
+    </div>
+    <section class="panel">
+      <h3>Occupancy — hits per ROC and port</h3>
+      <p>Each cell sums the 16 channels of one payload port. Grey cells are ports the 0x41 map does not list for that ROC. Click a cell to select that ROC and port below.</p>
+      <div class="scale" id="occupancyScale"></div>
+      <svg class="chart" id="chartOccupancy"></svg>
+    </section>
+    <section class="panel" id="rocPanel">
+      <div class="controls">
+        <h3>Per ROC</h3>
+        <label>ROC <select id="selRoc"></select></label>
+        <span id="rocInfo"></span>
+      </div>
       <div class="grid2">
-        <section class="panel"><h3>Hits per frame</h3><p id="nhSub"></p><svg id="nh"></svg></section>
-        <section class="panel"><h3>Total hit rate over time</h3><p id="rateSub"></p><svg id="rateAll"></svg></section>
+        <div class="cell"><h3>Port × channel occupancy</h3><span class="sub">hits per channel; click a cell to select the channel</span><svg class="chart" id="chartRocMap"></svg></div>
+        <div class="cell"><h3>Hit rate over time</h3><span class="sub" id="rocRateSub"></span><svg class="chart" id="chartRocRate"></svg></div>
+        <div class="cell"><h3>Charge spectrum</h3><span class="sub">hits per bin, log scale</span><svg class="chart" id="chartRocCharge"></svg></div>
+        <div class="cell"><h3>Hit time within frame</h3><span class="sub">hits per bin</span><svg class="chart" id="chartRocTime"></svg></div>
       </div>
     </section>
-    <section class="level" aria-labelledby="l2h">
-      <div class="lh"><span class="lnum" aria-hidden="true">2</span><div><h2 id="l2h">Per ROC</h2><p>Each crate's board × channel map, hit rate, charge and timing. All maps share one color scale, and charts of the same kind share one y-axis. Click a map cell to open that channel in section 3.</p></div></div>
-      <div class="scale" id="scale"></div>
-      <div id="rocBlocks" style="display:grid;gap:16px"></div>
-    </section>
-    <section class="level" id="lvl3" aria-labelledby="l3h">
-      <div class="lh"><span class="lnum" aria-hidden="true">3</span><div><h2 id="l3h">Per channel</h2><p id="chSub"></p></div></div>
-      <div class="chsel">
-        <label for="selRoc">ROC <select id="selRoc"></select></label>
-        <label for="selPort">Port <select id="selPort"></select></label>
-        <label for="selCh">Channel <select id="selCh"></select></label>
-        <button class="btn ghost" id="chPrev" type="button">‹ Prev</button><button class="btn ghost" id="chNext" type="button">Next ›</button>
+    <section class="panel" id="channelPanel">
+      <div class="controls">
+        <h3>Per channel</h3>
+        <label>Port <select id="selPort"></select></label>
+        <label>Channel <select id="selCh"></select></label>
+        <button class="btn ghost" id="chPrev" type="button">‹ Prev</button>
+        <button class="btn ghost" id="chNext" type="button">Next ›</button>
+        <span id="chInfo"></span>
       </div>
-      <section class="panel"><div class="grid3">
-        <div class="cell"><h3>Charge spectrum</h3><span class="sub">hits per 64-count bin of q, log scale</span><svg id="chq"></svg></div>
-        <div class="cell"><h3>Hit time within frame</h3><span class="sub">hits per 1 µs bin</span><svg id="cht"></svg></div>
-        <div class="cell"><h3>Hit rate over time</h3><span class="sub" id="chrSub"></span><svg id="chr"></svg></div>
-      </div></section>
+      <div class="grid3">
+        <div class="cell"><h3>Hit rate over time</h3><svg class="chart" id="chartChRate"></svg></div>
+        <div class="cell"><h3>Charge spectrum</h3><span class="sub">hits per bin, log scale</span><svg class="chart" id="chartChCharge"></svg></div>
+        <div class="cell"><h3>Hit time within frame</h3><span class="sub">hits per bin</span><svg class="chart" id="chartChTime"></svg></div>
+      </div>
+    </section>
+  </section>
+
+  <section class="view" id="v-records" hidden>
+    <section class="panel">
+      <div class="pager">
+        <button class="btn ghost" id="recPrev" type="button">‹ Prev</button>
+        <span id="recPageInfo"></span>
+        <button class="btn ghost" id="recNext" type="button">Next ›</button>
+        <label>Go to record <input type="number" id="recGo" min="0" value="0" style="width:110px"></label>
+        <span class="small">Click a row to open the record in the Structure tab.</span>
+      </div>
+      <div class="scroll"><table class="t" id="recordsTable"></table></div>
     </section>
   </section>
 
   <section class="view" id="v-structure" hidden>
     <div class="panes">
       <section class="pane">
-        <div class="pane-h"><span>Records</span>
-          <button class="btn ghost" id="pgPrev" type="button">‹ Prev 100</button>
-          <label for="recGo">Go to record</label><input type="number" id="recGo" min="0" value="0" style="width:110px">
-          <button class="btn ghost" id="pgNext" type="button">Next 100 ›</button></div>
-        <div id="tree" role="tree" aria-label="EVIO file structure"></div>
+        <div class="pane-h"><span>File → records → events → banks → hits. Expand a node to load its children.</span></div>
+        <div class="tree" id="tree" role="tree" aria-label="EVIO file structure"></div>
       </section>
-      <section class="pane"><div id="detail"><p>Click a row to see its fields and raw words.</p></div></section>
+      <section class="pane"><div class="detail" id="detail"><p>Select a node to see its header fields and raw words.</p></div></section>
     </div>
   </section>
-  </div>
 </div>
 <div class="tip" id="tip" hidden></div>
-
-<script>
-const $ = id => document.getElementById(id);
-const fmt = n => n.toLocaleString('en-US');
-const hx = (v, n = 8) => '0x' + (v >>> 0).toString(16).padStart(n, '0');
-const NS = 'http://www.w3.org/2000/svg';
-const el = (tag, attrs, parent) => { const n = document.createElementNS(NS, tag); for (const k in attrs) n.setAttribute(k, attrs[k]); parent && parent.appendChild(n); return n; };
-const tip = $('tip');
-function showTip(e, html) { tip.innerHTML = html; tip.hidden = false; const r = tip.getBoundingClientRect(); let x = e.clientX + 14, y = e.clientY + 14;
-  if (x + r.width > innerWidth - 8) x = e.clientX - r.width - 14; if (y + r.height > innerHeight - 8) y = e.clientY - r.height - 14; tip.style.left = x + 'px'; tip.style.top = y + 'px'; }
-const hideTip = () => tip.hidden = true;
-const SER = ['var(--s1)', 'var(--s2)', 'var(--s3)'];
-const MAGIC = 0xc0da0100;
-
-// =============== EVIO v6 reader ===============
-// Scans records to EOF (ignores the "last record" bit), uses the event index when present, else walks events by bank length.
-async function analyze(buf, onProgress) {
-  const dv = new DataView(buf), size = buf.byteLength;
-  if (size < 56) throw new Error('File is too small to be EVIO (under 56 bytes).');
-  let le;
-  if (dv.getUint32(28, false) === MAGIC) le = false; else if (dv.getUint32(28, true) === MAGIC) le = true;
-  else throw new Error('Not an EVIO v6 file: magic number 0xC0DA0100 not found at word 7 of the file header.');
-  const u = i => dv.getUint32(i * 4, le);
-  const version = u(5) & 0xff;
-  if (version !== 6) throw new Error(`EVIO version ${version} found; this viewer reads version 6 only.`);
-  const fh = Array.from({ length: 14 }, (_, i) => u(i));
-  let off = u(2) + (u(4) >> 2) + Math.ceil(u(6) / 4);
-  const nWords = Math.floor(size / 4);
-  const S = { name: '', size, le, fh, recOff: [], nLastBit: 0, nIndexed: 0, nCompressed: 0, nEvents: 0, nStream: 0, nOther: 0, tail: null,
-    rocs: [], ports: [], rowOf: new Map(), occ: new Float64Array(64 * 16), qch: new Uint32Array(64 * 16 * 128), tch: new Uint32Array(64 * 16 * 64), rch: [],
-    th: Array.from({ length: 8 }, () => new Float64Array(64)), rate: Array.from({ length: 8 }, () => []), nh: [], frames: [], period: 0,
-    nHits: 0, emptyBanks: 0, dataBanks: 0, overflow: 0, outOfOrder: 0, bit31: 0, sortedBanks: 0 };
-  let prevFrame = -1, lastYield = performance.now();
-  while (off + 14 <= nWords) {
-    const len = u(off);
-    if (u(off + 7) !== MAGIC || len < 14 || off + len > nWords) { S.tail = { off: off * 4, why: u(off + 7) !== MAGIC ? 'bad record magic number' : 'record length runs past end of file' }; break; }
-    S.recOff.push(off);
-    const hdrLen = u(off + 2), idxLen = u(off + 4), uhLen = u(off + 6), bi = u(off + 5), comp = u(off + 9) >>> 28, nev = u(off + 3);
-    if ((bi >> 9) & 1) S.nLastBit++;
-    if (idxLen) S.nIndexed++;
-    if (comp) { S.nCompressed++; off += len; continue; }
-    let p = off + hdrLen + (idxLen >> 2) + Math.ceil(uhLen / 4);
-    const evs = [];
-    if (idxLen) for (let i = 0; i < idxLen / 4; i++) { evs.push(p); p += u(off + hdrLen + i) >> 2; }
-    else { const end = off + len; for (let i = 0; i < nev && p + 2 <= end; i++) { evs.push(p); p += u(p) + 1; } }
-    for (const e of evs) { S.nEvents++; decodeEvent(u, e, S); }
-    off += len;
-    if (S.recOff.length % 4000 === 0 && performance.now() - lastYield > 60) { onProgress(off * 4 / size); await new Promise(r => setTimeout(r)); lastYield = performance.now(); }
-  }
-  S.u = u;
-  // frame bookkeeping
-  const fr = Uint32Array.from(S.frames);
-  for (let i = 1; i < fr.length; i++) if (fr[i] < fr[i - 1]) S.outOfOrder++;
-  if (fr.length) { const s = fr.slice().sort(); S.fMin = s[0]; S.fMax = s[s.length - 1]; let dup = 0; for (let i = 1; i < s.length; i++) if (s[i] === s[i - 1]) dup++; S.dup = dup; S.missing = S.fMax - S.fMin + 1 - (s.length - dup); }
-  return S;
-}
-// CODA streaming event: 0xFF60 { 0xFF31 {seg 0x32: frame, ts}, ROC bank { 0xFF30 {...}, payload bank per port { hit words } } ... }
-function decodeEvent(u, p, S) {
-  const evEnd = p + u(p) + 1;
-  if ((u(p + 1) >>> 16) !== 0xff60) { S.nOther++; return; }
-  let q = p + 2;
-  if ((u(q + 1) >>> 16) !== 0xff31 || (u(q + 2) >>> 24) !== 0x32) { S.nOther++; return; }
-  const frame = u(q + 3), ts = u(q + 4) + u(q + 5) * 4294967296;
-  if (!S.period && frame > 0) S.period = ts / frame;
-  S.nStream++; S.frames.push(frame);
-  const rbin = Math.floor(frame / 1024);
-  q += u(q) + 1;
-  let nInFrame = 0;
-  while (q < evEnd) {
-    const rEnd = q + u(q) + 1, roc = u(q + 1) >>> 16;
-    let ri = S.rocs.indexOf(roc); if (ri < 0) { if (S.rocs.length >= 8) { q = rEnd; continue; } ri = S.rocs.push(roc) - 1; }
-    let r = q + 2;
-    if (r < rEnd && (u(r + 1) >>> 16) === 0xff30) r += u(r) + 1;
-    while (r < rEnd) {
-      const plen = u(r), port = u(r + 1) >>> 16, n = plen - 1, key = roc * 65536 + port;
-      let row = S.rowOf.get(key);
-      if (row === undefined && S.rowOf.size < 64) { row = S.rowOf.size; S.rowOf.set(key, row); S.ports.push({ roc, port }); }
-      if (n <= 0) S.emptyBanks++;
-      else {
-        S.dataBanks++; let prevT = -1, sorted = true;
-        for (let k = 0; k < n; k++) {
-          const x = u(r + 2 + k), t = (x >>> 17) & 0x3fff, ch = (x >>> 13) & 0xf, qq = x & 0x1fff;
-          if (x >>> 31) S.bit31++;
-          if (t < prevT) sorted = false; prevT = t;
-          if (qq === 8191) S.overflow++;
-          if (row !== undefined) { const c = row * 16 + ch; S.occ[c]++; S.qch[c * 128 + (qq >> 6)]++; S.tch[c * 64 + (t >> 8)]++; const rc = S.rch[c] || (S.rch[c] = []); rc[rbin] = (rc[rbin] || 0) + 1; }
-          S.th[ri][t >> 8]++;
-        }
-        if (sorted) S.sortedBanks++;
-        S.rate[ri][rbin] = (S.rate[ri][rbin] || 0) + n;
-        S.nHits += n; nInFrame += n;
-      }
-      r += plen + 1;
-    }
-    q = rEnd;
-  }
-  S.nh[nInFrame] = (S.nh[nInFrame] || 0) + 1;
-}
-
-// =============== rendering: overview ===============
-function renderOverview(S) {
-  const period = S.period || 65536, dur = S.nStream * period / 1e9, isStream = S.nStream > 0;
-  const tiles = [[fmt(S.recOff.length), 'records'], [fmt(S.nEvents), 'events']];
-  if (isStream) tiles.push([fmt(S.nHits), 'fADC hits'], [dur.toFixed(dur < 10 ? 3 : 2) + ' s', `${(period / 1000).toFixed(1)} µs per frame`], [(S.nHits / dur / 1e3).toFixed(1) + ' kHz', 'total hit rate'], [String(S.rowOf.size * 16), `channels · ${S.rocs.length} ROC × boards × 16`]);
-  $('tiles').innerHTML = tiles.map(([v, k]) => `<div class="tile"><div class="v">${v}</div><div class="k">${k}</div></div>`).join('');
-  const nR = S.recOff.length, ck = [];
-  const add = (cls, b, d) => ck.push(`<div class="ck"><span class="ico ${cls}" aria-hidden="true">${cls === 'ok' ? '✓' : cls === 'w' ? '!' : '×'}</span><div><b>${b}</b> <span class="d">${d}</span></div></div>`);
-  add('ok', `EVIO v6, ${S.le ? 'little' : 'big'}-endian.`, `${fmt(nR)} records found by scanning to the end of the file.`);
-  if (S.tail) add('x', 'Record structure breaks before end of file.', `At byte ${fmt(S.tail.off)} (${S.tail.why}). The file may be truncated; records after this point are not read.`);
-  if (S.nLastBit > 1) add('w', `${S.nLastBit === nR ? 'Every' : fmt(S.nLastBit)} record${S.nLastBit === nR ? '' : 's'} set the “last record” bit.`, 'Strict readers stop at the first one; this viewer and pyevio keep scanning while record headers follow.');
-  if (S.nIndexed < nR) add('w', `${S.nIndexed ? fmt(nR - S.nIndexed) + ' records have' : 'Records have'} no event index.`, 'Events in those records are found by walking bank lengths instead.');
-  if (S.nCompressed) add('x', `${fmt(S.nCompressed)} compressed records skipped.`, 'LZ4/gzip records are not decoded in the browser. Use pyevio for these files.');
-  if (isStream) add('ok', `${fmt(S.nStream)} streaming time frames (0xFF60) decoded.`, `${fmt(S.dataBanks)} payload banks with hits, ${fmt(S.emptyBanks)} empty.`);
-  if (S.nOther) add('w', `${fmt(S.nOther)} events are not 0xFF60 streaming frames.`, 'They appear in the Structure tab but not in the plots.');
-  if (isStream) {
-    add(S.bit31 ? 'w' : 'ok', S.bit31 ? `${fmt(S.bit31)} hit words have bit 31 set.` : 'Hit word format consistent.', S.bit31 ? 'The fADC hit format may differ for this file; check the bit layout.' : `Bit 31 never set; ${(100 * S.sortedBanks / S.dataBanks).toFixed(1)}% of hit lists are time-ordered.`);
-    add(S.missing || S.dup ? 'w' : 'ok', S.missing || S.dup ? `Frames: ${fmt(S.missing)} missing, ${fmt(S.dup)} duplicated.` : `Frames ${fmt(S.fMin)}–${fmt(S.fMax)} all present.`, `${fmt(S.outOfOrder)} events arrive out of order (${(100 * S.outOfOrder / S.nStream).toFixed(1)}%).`);
-  }
-  $('checks').innerHTML = ck.join('');
-  const F = [];
-  if (isStream && S.nHits) {
-    const cells = []; S.ports.forEach((pp, row) => { for (let c = 0; c < 16; c++) cells.push({ ...pp, c, n: S.occ[row * 16 + c] }); });
-    cells.sort((a, b) => b.n - a.n);
-    const top = cells.slice(0, 4), share = top.reduce((a, b) => a + b.n, 0) / S.nHits;
-    F.push(`<b>Top 4 channels carry ${(share * 100).toFixed(0)}% of hits</b>: ` + top.map(x => `ROC ${x.roc} p${x.port} ch${x.c} (${(x.n / dur / 1e3).toFixed(1)} kHz)`).join(', ') + '.');
-    const dead = cells.filter(x => !x.n);
-    F.push(dead.length ? `<b>${dead.length} channel${dead.length > 1 ? 's' : ''} with no hits</b>: ` + dead.slice(0, 24).map(x => `${x.roc}/p${x.port}/ch${x.c}`).join(', ') + (dead.length > 24 ? ' …' : '') + '.' : '<b>Every channel has hits.</b>');
-    const perRoc = S.rocs.map((r, i) => `ROC ${r}: ${(S.rate[i].reduce((a, b) => a + (b || 0), 0) / dur / 1e3).toFixed(1)} kHz`);
-    F.push(`<b>Rate by ROC</b>: ${perRoc.join(', ')}.`);
-    F.push(`<b>${fmt(S.overflow)} hits at q = 8191</b> (13-bit charge overflow).`);
-    F.push(`<b>Mean ${(S.nHits / S.nStream).toFixed(1)} hits per frame</b>; ${(100 * S.emptyBanks / (S.emptyBanks + S.dataBanks)).toFixed(0)}% of payload banks are empty.`);
-  } else F.push('No CODA streaming hits found. Use the Structure tab to browse the banks.');
-  $('find').innerHTML = F.map(x => `<li>${x}</li>`).join('');
-}
-
-// =============== rendering: plots ===============
-const sci = v => v >= 1e6 ? +(v / 1e6).toPrecision(3) + 'M' : v >= 1e3 ? +(v / 1e3).toPrecision(3) + 'k' : String(+v.toPrecision(3));
-function lineChart(id, { xs, series, logY, xLabel, yFmt, xFmt, step, yDomain }) {
-  const svg = typeof id === 'string' ? $(id) : id; svg.innerHTML = ''; const W = 480, H = 250, m = { l: 52, r: 12, t: 10, b: 34 };
-  svg.setAttribute('viewBox', `0 0 ${W} ${H}`); svg.style.width = '100%'; svg.style.height = 'auto';
-  const all = series.flatMap(s => s.y).filter(v => !logY || v > 0);
-  if (!all.length) return;
-  let y0 = logY ? Math.floor(Math.log10(Math.min(...all))) : 0;
-  let y1 = logY ? Math.max(y0 + 1, Math.ceil(Math.log10(Math.max(...all)))) : (Math.max(...all) * 1.05 || 1);
-  if (yDomain) [y0, y1] = yDomain;          // shared axis across small multiples
-  const x0 = xs[0], x1 = xs[xs.length - 1] === x0 ? x0 + 1 : xs[xs.length - 1];
-  const X = v => m.l + (v - x0) / (x1 - x0) * (W - m.l - m.r);
-  const Y = v => { const t = logY ? (v > 0 ? Math.log10(v) : y0) : v; return H - m.b - (t - y0) / (y1 - y0) * (H - m.t - m.b); };
-  const ticks = logY ? Array.from({ length: y1 - y0 + 1 }, (_, i) => 10 ** (y0 + i)) : [0, 1, 2, 3, 4].map(i => y1 / 4 * i);
-  ticks.forEach(t => { el('line', { x1: m.l, x2: W - m.r, y1: Y(t), y2: Y(t), stroke: 'var(--grid)' }, svg);
-    el('text', { x: m.l - 6, y: Y(t) + 4, 'text-anchor': 'end' }, svg).textContent = yFmt(t); });
-  for (let i = 0; i <= 4; i++) { const v = x0 + (x1 - x0) * i / 4;
-    el('text', { x: X(v), y: H - m.b + 16, 'text-anchor': i === 0 ? 'start' : i === 4 ? 'end' : 'middle' }, svg).textContent = xFmt(v); }
-  el('text', { x: (m.l + W - m.r) / 2, y: H - 2, 'text-anchor': 'middle', style: 'fill:var(--fg3)' }, svg).textContent = xLabel;
-  el('line', { x1: m.l, x2: W - m.r, y1: H - m.b, y2: H - m.b, stroke: 'var(--line)' }, svg);
-  const n = step ? xs.length - 1 : xs.length;
-  series.forEach(s => { let d = '';
-    for (let i = 0; i < n; i++) { const x = X(xs[i]), y = Y(s.y[i]);
-      d += (i ? 'L' : 'M') + x.toFixed(1) + ',' + y.toFixed(1); if (step) d += 'L' + X(xs[i + 1]).toFixed(1) + ',' + y.toFixed(1); }
-    el('path', { d, fill: 'none', stroke: s.color, 'stroke-width': 2, 'stroke-linejoin': 'round' }, svg); });
-  const cross = el('line', { y1: m.t, y2: H - m.b, stroke: 'var(--fg3)', 'stroke-dasharray': '3 3', visibility: 'hidden' }, svg);
-  const dots = series.map(s => el('circle', { r: 4, fill: s.color, stroke: 'var(--surface)', 'stroke-width': 2, visibility: 'hidden' }, svg));
-  const hit = el('rect', { x: m.l, y: m.t, width: W - m.l - m.r, height: H - m.t - m.b, fill: 'transparent' }, svg);
-  hit.addEventListener('mousemove', e => {
-    const p = svg.createSVGPoint(); p.x = e.clientX; p.y = e.clientY; const sp = p.matrixTransform(svg.getScreenCTM().inverse());
-    const f = (sp.x - m.l) / (W - m.l - m.r) * (xs.length - 1); let i = step ? Math.floor(f) : Math.round(f); i = Math.max(0, Math.min(n - 1, i));
-    const cx = step ? (X(xs[i]) + X(xs[i + 1])) / 2 : X(xs[i]);
-    cross.setAttribute('x1', cx); cross.setAttribute('x2', cx); cross.setAttribute('visibility', 'visible');
-    series.forEach((s, k) => { dots[k].setAttribute('cx', cx); dots[k].setAttribute('cy', Y(s.y[i])); dots[k].setAttribute('visibility', s.y[i] > 0 || !logY ? 'visible' : 'hidden'); });
-    showTip(e, `${xFmt(xs[i], true, step ? xs[i + 1] : null)}<br>` + series.map(s => `<span style="color:${s.color}">■</span> ${s.name}: ${s.fmt ? s.fmt(s.y[i]) : fmt(s.y[i])}`).join('<br>'));
-  });
-  hit.addEventListener('mouseleave', () => { hideTip(); cross.setAttribute('visibility', 'hidden'); dots.forEach(d => d.setAttribute('visibility', 'hidden')); });
-}
-// Helpers shared by the three levels
-const RAMP = ['#cde2fb', '#b7d3f6', '#9ec5f4', '#86b6ef', '#6da7ec', '#5598e7', '#3987e5', '#2a78d6', '#256abf', '#1c5cab', '#184f95', '#104281', '#0d366b'];
-const QX = [...Array(129).keys()].map(b => b * 64), TX = [...Array(65).keys()].map(b => b * 1.024);
-const qFmt = (v, t, b) => t ? `q ${v}–${b - 1}` : v.toFixed(0), tFmt = (v, t, b) => t ? `${v.toFixed(1)}–${b.toFixed(1)} µs` : v.toFixed(0);
-const rateStr = hz => hz >= 1e3 ? (hz / 1e3).toFixed(hz >= 1e5 ? 0 : 1) + ' kHz' : hz >= 1 ? hz.toFixed(1) + ' Hz' : hz.toFixed(3) + ' Hz';
-const decades = arrs => { const v = arrs.flat().filter(x => x > 0); return v.length ? [Math.floor(Math.log10(Math.min(...v))), Math.max(Math.floor(Math.log10(Math.min(...v))) + 1, Math.ceil(Math.log10(Math.max(...v))))] : null; };
-let PS = null;   // plot state: rate binning, color scale, selected channel
-function rateBins(S) { const nb = Math.floor((S.fMax || 0) / 1024) + 1, merge = Math.max(1, Math.ceil(nb / 300)), period = S.period || 65536;
-  const xs = []; for (let b = 0; b < nb; b += merge) xs.push(b * 1024 * period / 1e9);
-  return { nb, merge, xs, binS: 1024 * merge * period / 1e9 }; }
-function binRate(arr, R) { const out = []; for (let b = 0; b < R.nb; b += R.merge) { let s = 0; if (arr) for (let k = b; k < b + R.merge && k < R.nb; k++) s += arr[k] || 0; out.push(s / R.binS); } return out; }   // Hz
-function rateChart(el, ys, R, yDomain) { lineChart(el, { xs: R.xs, logY: true, yDomain, xLabel: 'time in run (s)', yFmt: v => rateStr(v).replace('.0 ', ' '), xFmt: (v, t) => t ? `t = ${v.toFixed(2)} s` : v.toFixed(1),
-  series: [{ name: 'rate', y: ys, color: SER[0], fmt: rateStr }] }); }
-
-function renderPlots(S) {
-  ['nh', 'rateAll', 'chq', 'cht', 'chr'].forEach(id => $(id).innerHTML = ''); $('rocBlocks').innerHTML = '';
-  if (!S.nHits) { $('l1sub').textContent = 'No CODA streaming hits in this file.'; $('lvl3').hidden = true; return; }
-  $('lvl3').hidden = false;
-  const period = S.period || 65536, dur = S.nStream * period / 1e9, R = rateBins(S);
-  // ---- 1. File
-  $('l1sub').textContent = `${fmt(S.nStream)} frames of ${(period / 1000).toFixed(1)} µs · ${fmt(S.nHits)} hits · ${dur.toFixed(2)} s of data · ${S.rocs.length} ROC${S.rocs.length > 1 ? 's' : ''}`;
-  const nh = Array.from({ length: S.nh.length }, (_, i) => S.nh[i] || 0);
-  $('nhSub').textContent = `Number of frames by total hit count. Mean ${(S.nHits / S.nStream).toFixed(1)}, max ${nh.length - 1}; ${(100 * (nh[0] || 0) / S.nStream).toFixed(1)}% of frames have no hits.`;
-  lineChart('nh', { xs: nh.map((_, i) => i), xLabel: 'hits in frame', yFmt: sci, xFmt: (v, t) => t ? `${v} hits` : v.toFixed(0), series: [{ name: 'frames', y: nh, color: SER[0] }] });
-  const all = []; S.rocs.forEach((_, ri) => S.rate[ri].forEach((v, k) => { all[k] = (all[k] || 0) + (v || 0); }));
-  $('rateSub').textContent = `All ROCs, per ${R.binS >= 1 ? R.binS.toFixed(2) + ' s' : (R.binS * 1000).toFixed(0) + ' ms'} bin (${fmt(1024 * R.merge)} frames), log scale. Drops to the bottom mark missing frames.`;
-  rateChart('rateAll', binRate(all, R), R);
-  // ---- 2. Per ROC
-  const rows = S.ports.map((p, i) => ({ ...p, i }));
-  const rates = []; rows.forEach(r => { for (let c = 0; c < 16; c++) rates.push(S.occ[r.i * 16 + c] / dur); });
-  const pos = rates.filter(r => r > 0), lo = Math.log10(Math.min(...pos)), hi = Math.log10(Math.max(...pos)) + 1e-9;
-  const colorOf = r => RAMP[Math.min(RAMP.length - 1, Math.floor((Math.log10(r) - lo) / Math.max(hi - lo, 1e-9) * RAMP.length))];
-  $('scale').innerHTML = `<span>${rateStr(10 ** lo)}</span><span class="rb" style="background:linear-gradient(90deg,${RAMP.join(',')})"></span><span>${rateStr(10 ** hi)}</span><span style="margin-left:8px">× no hits</span>`;
-  const rocOrder = S.rocs.map((roc, ri) => ({ roc, ri })).sort((a, b) => a.roc - b.roc);
-  const per = rocOrder.map(({ roc, ri }) => {
-    const rr = rows.filter(r => r.roc === roc).sort((a, b) => a.port - b.port);
-    const q = new Array(128).fill(0); rr.forEach(r => { for (let c = 0; c < 16; c++) for (let b = 0; b < 128; b++) q[b] += S.qch[(r.i * 16 + c) * 128 + b]; });
-    return { roc, ri, rr, q, rate: binRate(S.rate[ri], R), t: Array.from(S.th[ri]) };
-  });
-  const dRate = decades(per.map(p => p.rate)), dQ = decades(per.map(p => p.q));
-  const tMax = Math.max(...per.map(p => Math.max(...p.t.map(v => v / (p.t.reduce((a, b) => a + b, 0) || 1))))) * 1.05;
-  per.forEach(P => {
-    const n = P.rr.reduce((a, r) => a + S.occ.slice(r.i * 16, r.i * 16 + 16).reduce((x, y) => x + y, 0), 0);
-    const dead = P.rr.reduce((a, r) => a + S.occ.slice(r.i * 16, r.i * 16 + 16).filter(x => !x).length, 0);
-    const blk = document.createElement('section'); blk.className = 'panel'; $('rocBlocks').appendChild(blk);
-    blk.innerHTML = `<h3>ROC ${P.roc} <span style="color:var(--fg3);font-weight:400">(${hx(P.roc, 2)})</span></h3>
-      <div class="rocstats"><span><b>${fmt(n)}</b> hits</span><span><b>${rateStr(n / dur)}</b></span><span><b>${P.rr.length}</b> boards (ports ${P.rr.map(r => r.port).join(', ')})</span><span><b>${dead}</b> channels with no hits</span><span><b>${(100 * n / S.nHits).toFixed(1)}%</b> of file hits</span></div>
-      <div class="scroll"><svg class="map" role="img" aria-label="ROC ${P.roc} occupancy map"></svg></div>
-      <details><summary>Show map as table (hits per channel)</summary><div class="scroll tbl"></div></details>
-      <div class="grid3">
-        <div class="cell"><h3>Hit rate over time</h3><span class="sub">per ${R.binS >= 1 ? R.binS.toFixed(2) + ' s' : (R.binS * 1000).toFixed(0) + ' ms'} bin, log scale</span><svg class="c-rate"></svg></div>
-        <div class="cell"><h3>Charge spectrum</h3><span class="sub">hits per 64-count bin of q, log scale</span><svg class="c-q"></svg></div>
-        <div class="cell"><h3>Hit time within frame</h3><span class="sub">fraction of this ROC's hits per 1 µs bin</span><svg class="c-t"></svg></div>
-      </div>`;
-    drawMap(blk.querySelector('.map'), S, P.rr, colorOf, dur);
-    blk.querySelector('.tbl').innerHTML = '<table class="t"><tr><th>port</th>' + [...Array(16).keys()].map(c => `<th>ch${c}</th>`).join('') + '</tr>' +
-      P.rr.map(r => `<tr><th>p${r.port}</th>` + [...Array(16).keys()].map(c => `<td>${S.occ[r.i * 16 + c]}</td>`).join('') + '</tr>').join('') + '</table>';
-    rateChart(blk.querySelector('.c-rate'), P.rate, R, dRate);
-    lineChart(blk.querySelector('.c-q'), { xs: QX, step: true, logY: true, yDomain: dQ, xLabel: 'charge q', yFmt: sci, xFmt: qFmt, series: [{ name: 'hits', y: P.q, color: SER[0] }] });
-    const ts = P.t.reduce((a, b) => a + b, 0) || 1;
-    lineChart(blk.querySelector('.c-t'), { xs: TX, step: true, yDomain: [0, tMax], xLabel: 'time in frame (µs)', yFmt: v => (v * 100).toFixed(1) + '%', xFmt: tFmt,
-      series: [{ name: 'share', y: P.t.map(v => v / ts), color: SER[0], fmt: v => (v * 100).toFixed(2) + '%' }] });
-  });
-  // ---- 3. Per channel
-  PS = { S, R, dur };
-  $('selRoc').innerHTML = rocOrder.map(({ roc }) => `<option value="${roc}">ROC ${roc}</option>`).join('');
-  let best = 0; for (let k = 1; k < S.ports.length * 16; k++) if (S.occ[k] > S.occ[best]) best = k;
-  const bp = S.ports[Math.floor(best / 16)]; selectChannel(bp.roc, bp.port, best % 16, false);
-}
-function drawMap(svg, S, rr, colorOf, dur) {
-  const cw = 40, ch = 22, L = 56, T = 20, W = L + 16 * cw, H = T + rr.length * ch + 4;
-  svg.setAttribute('viewBox', `0 0 ${W} ${H}`); svg.setAttribute('width', W); svg.setAttribute('height', H);
-  for (let c = 0; c < 16; c++) el('text', { x: L + c * cw + cw / 2, y: 13, 'text-anchor': 'middle' }, svg).textContent = 'ch' + c;
-  rr.forEach((r, k) => {
-    const y = T + k * ch;
-    el('text', { x: L - 8, y: y + ch / 2 + 4, 'text-anchor': 'end' }, svg).textContent = 'port ' + r.port;
-    for (let c = 0; c < 16; c++) {
-      const n = S.occ[r.i * 16 + c], x = L + c * cw, g = el('g', { style: 'cursor:pointer', 'data-k': r.i * 16 + c }, svg);
-      el('rect', { x: x + 1, y: y + 1, width: cw - 2, height: ch - 2, rx: 2, fill: n ? colorOf(n / dur) : 'var(--q0)' }, g);
-      if (!n) el('text', { x: x + cw / 2, y: y + ch / 2 + 4, 'text-anchor': 'middle', style: 'fill:var(--dead)' }, g).textContent = '×';
-      el('rect', { class: 'selring', x: x + 1, y: y + 1, width: cw - 2, height: ch - 2, rx: 2, fill: 'none', stroke: 'var(--fg)', 'stroke-width': 2, visibility: 'hidden' }, g);
-      el('rect', { x, y, width: cw, height: ch, fill: 'transparent' }, g);
-      g.addEventListener('mousemove', e => showTip(e, `ROC ${r.roc} · port ${r.port} · ch ${c}<br>${fmt(n)} hits · ${rateStr(n / dur)}<br>click to open in section 3`));
-      g.addEventListener('mouseleave', hideTip);
-      g.addEventListener('click', () => selectChannel(r.roc, r.port, c, true));
-    }
-  });
-}
-function selectChannel(roc, port, c, scroll) {
-  const { S, R, dur } = PS, ports = S.ports.map((p, i) => ({ ...p, i })).filter(p => p.roc === roc).sort((a, b) => a.port - b.port);
-  $('selRoc').value = roc;
-  $('selPort').innerHTML = ports.map(p => `<option value="${p.port}">port ${p.port}</option>`).join(''); $('selPort').value = port;
-  const row = S.rowOf.get(roc * 65536 + port);
-  $('selCh').innerHTML = [...Array(16).keys()].map(k => `<option value="${k}">ch ${k} · ${sci(S.occ[row * 16 + k])} hits</option>`).join(''); $('selCh').value = c;
-  const k = row * 16 + c, n = S.occ[k], q = Array.from(S.qch.subarray(k * 128, k * 128 + 128));
-  let acc = 0, med = 0; for (let b = 0; b < 128; b++) { acc += q[b]; if (acc >= n / 2) { med = b * 64 + 32; break; } }
-  const rank = Array.from(S.occ.subarray(0, S.ports.length * 16)).filter(v => v > n).length + 1;
-  $('chSub').textContent = n ? `ROC ${roc} · port ${port} · ch ${c}: ${fmt(n)} hits, ${rateStr(n / dur)}, median q ≈ ${med}. Busiest channel rank ${rank} of ${S.ports.length * 16}${q[127] ? `; ${fmt(q[127])} hits in the top charge bin` : ''}.`
-    : `ROC ${roc} · port ${port} · ch ${c}: no hits in this file.`;
-  document.querySelectorAll('.selring').forEach(r => r.setAttribute('visibility', +r.parentNode.dataset.k === k ? 'visible' : 'hidden'));
-  ['chq', 'cht', 'chr'].forEach(id => $(id).innerHTML = '');
-  $('chrSub').textContent = `per ${R.binS >= 1 ? R.binS.toFixed(2) + ' s' : (R.binS * 1000).toFixed(0) + ' ms'} bin, log scale`;
-  if (n) {
-    lineChart('chq', { xs: QX, step: true, logY: true, xLabel: 'charge q', yFmt: sci, xFmt: qFmt, series: [{ name: 'hits', y: q, color: SER[0] }] });
-    lineChart('cht', { xs: TX, step: true, xLabel: 'time in frame (µs)', yFmt: sci, xFmt: tFmt, series: [{ name: 'hits', y: Array.from(S.tch.subarray(k * 64, k * 64 + 64)), color: SER[0] }] });
-    rateChart('chr', binRate(S.rch[k], R), R);
-  }
-  if (scroll) $('lvl3').scrollIntoView({ behavior: window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'start' });
-}
-function stepChannel(d) {
-  const { S } = PS, list = S.ports.map((p, i) => ({ ...p, i })).sort((a, b) => a.roc - b.roc || a.port - b.port).flatMap(p => [...Array(16).keys()].map(c => [p.roc, p.port, c]));
-  const cur = list.findIndex(([r, p, c]) => r === +$('selRoc').value && p === +$('selPort').value && c === +$('selCh').value);
-  const nx = list[(cur + d + list.length) % list.length]; selectChannel(nx[0], nx[1], nx[2], false);
-}
-$('selRoc').addEventListener('change', () => { const roc = +$('selRoc').value, p = PS.S.ports.filter(x => x.roc === roc).sort((a, b) => a.port - b.port)[0]; selectChannel(roc, p.port, 0, false); });
-$('selPort').addEventListener('change', () => selectChannel(+$('selRoc').value, +$('selPort').value, +$('selCh').value, false));
-$('selCh').addEventListener('change', () => selectChannel(+$('selRoc').value, +$('selPort').value, +$('selCh').value, false));
-$('chPrev').addEventListener('click', () => stepChannel(-1));
-$('chNext').addEventListener('click', () => stepChannel(1));
-
-// =============== rendering: structure tree ===============
-const TYPES = { 0x0: 'unknown32', 0x1: 'uint32', 0x2: 'float32', 0x3: 'string', 0x4: 'int16', 0x5: 'uint16', 0x6: 'int8', 0x7: 'uint8', 0x8: 'double', 0x9: 'int64', 0xa: 'uint64', 0xb: 'int32', 0xc: 'tagsegment', 0xd: 'segment', 0xe: 'bank', 0xf: 'composite', 0x10: 'bank', 0x20: 'segment' };
-let TS = null, page = 0;
-function fileHeaderNode(S) {
-  const w = S.fh;
-  return { kind: 'file', name: 'File header', meta: '14 words', words: w, base: 0, hdr: 14, note: 'Fixed 14-word header at the start of every EVIO v6 file.',
-    fields: [['File type ID', hx(w[0])], ['File number', w[1]], ['Header length', w[2] + ' words'], ['Record count (header)', w[3]], ['Index array length', w[4] + ' bytes'],
-      ['Bit info / version', hx(w[5]) + ' → version ' + (w[5] & 0xff)], ['User header length', w[6] + ' bytes'], ['Magic number', hx(w[7])], ['Trailer position', hx(w[10]) + hx(w[11], 8).slice(2)]] };
-}
-function recordNode(S, ri) {
-  const off = S.recOff[ri], len = S.u(off), w = Array.from({ length: len }, (_, i) => S.u(off + i)), bi = w[5], base = off;
-  const kids = [{ kind: 'rec', name: 'Record header', meta: '14 words', words: w.slice(0, 14), base, hdr: 14, note: 'Record header: length, counts, flags and the magic number.',
-    fields: [['Record length', w[0] + ' words'], ['Record number', w[1]], ['Header length', w[2] + ' words'], ['Event count', w[3]], ['Index array length', w[4] + ' bytes'],
-      ['Bit info / version', hx(bi)], ['  last record (bit 9)', (bi >> 9) & 1], ['  event type (bits 10–13)', (bi >> 10) & 0xf], ['User header length', w[6] + ' bytes'], ['Magic number', hx(w[7])],
-      ['Compression', (w[9] >>> 28) ? 'type ' + (w[9] >>> 28) + ' (not decoded)' : 'none']] }];
-  if (!(w[9] >>> 28)) {
-    let p = w[2] + (w[4] >> 2) + Math.ceil(w[6] / 4);
-    for (let ev = 0; ev < w[3] && p + 2 <= w.length; ev++) {
-      const evLen = w[4] ? (S.u(off + w[2] + ev) >> 2) : w[p] + 1;
-      const n = parseBank(w, p, base, { depth: 0 }); n.name = 'Event ' + ev + ' · ' + n.name; kids.push(n); p += evLen;
-    }
-  }
-  return { kind: 'rec', name: 'Record ' + ri, meta: `@ byte ${hx(off * 4, 6)} · ${len} words`, words: w, base, hdr: 14, note: 'One record = header + events.',
-    fields: [['Byte offset', fmt(off * 4)], ['Length', len + ' words (' + len * 4 + ' bytes)'], ['Events', w[3]]], kids };
-}
-function bankLabel(tag, ctx) {
-  if (tag === 0xff60) return 'Built time frame (0xFF60)';
-  if (tag === 0xff31) return 'Stream info bank (0xFF31)';
-  if (tag === 0xff30) return 'ROC stream info (0xFF30)';
-  if (ctx.inRoc) return 'Payload port ' + tag;
-  if (ctx.depth === 1 && ctx.parentTag === 0xff60) return `ROC ${tag} data bank (${hx(tag, 4)})`;
-  return 'Bank ' + hx(tag, 4);
-}
-function parseBank(w, p, base, ctx) {
-  const len = w[p], h = w[p + 1], tag = h >>> 16, type = (h >> 8) & 0x3f, num = h & 0xff, end = Math.min(p + len + 1, w.length);
-  const node = { kind: 'bank', name: bankLabel(tag, ctx), words: w.slice(p, end), base: base + p, hdr: 2,
-    fields: [['Length', len + ' words (excl. this word)'], ['Tag', hx(tag, 4)], ['Data type', hx(type, 2) + ' (' + (TYPES[type] || '?') + ')'], ['Num', num]] };
-  if (type === 0x10 || type === 0xe) {
-    node.meta = `bank of banks · ${len + 1} w`; node.kids = []; let q = p + 2;
-    while (q < end) { node.kids.push(parseBank(w, q, base, { depth: ctx.depth + 1, parentTag: tag, inRoc: ctx.depth === 1 && ctx.parentTag === 0xff60 && tag !== 0xff31 })); q += w[q] + 1; }
-    if (tag === 0xff60) node.note = 'One streaming time frame merged by the event builder: a stream info bank, then one data bank per ROC.';
-  } else if (type === 0x20 || type === 0xd) {
-    node.meta = `bank of segments · ${len + 1} w`; node.kids = []; let q = p + 2;
-    while (q < end) { node.kids.push(parseSeg(w, q, base)); q += (w[q] & 0xffff) + 1; }
-  } else {
-    const data = w.slice(p + 2, end), isPayload = ctx.inRoc;
-    node.kind = 'data';
-    node.meta = isPayload ? (data.length ? `${data.length} hit${data.length > 1 ? 's' : ''}` : 'empty') : `${data.length} words`;
-    node.note = isPayload ? (data.length ? 'Hit list for one fADC250 board: one 32-bit word per pulse above threshold.' : 'No hits on this board in this frame (length = 1).') : 'Data bank.';
-    if (data.length) node.kids = data.slice(0, 2000).map((x, i) => isPayload ? hitNode(x, base + p + 2 + i) : { kind: 'hit', name: hx(x), meta: '', words: [x], base: base + p + 2 + i, hdr: 0, fields: [['Word', hx(x)]] });
-  }
-  return node;
-}
-function parseSeg(w, p, base) {
-  const h = w[p], tag = h >>> 24, type = (h >> 16) & 0x3f, len = h & 0xffff, d = w.slice(p + 1, p + 1 + len);
-  const node = { kind: 'seg', words: w.slice(p, p + len + 1), base: base + p, hdr: 1, meta: `${len + 1} w`, name: 'Segment ' + hx(tag, 2),
-    fields: [['Tag', hx(tag, 2)], ['Data type', hx(type, 2) + ' (' + (TYPES[type] || '?') + ')'], ['Length', len + ' words']] };
-  if ((tag === 0x31 || tag === 0x32) && d.length >= 3) {
-    const ts = d[1] + d[2] * 4294967296;
-    node.name = `Time slice segment (${hx(tag, 2)}) · frame ${d[0]}`; node.note = 'Frame number and timestamp.';
-    node.fields.push(['Frame number', fmt(d[0])], ['Timestamp', fmt(ts)]);
-  } else if (tag === 0x42) { node.name = 'Aggregation info segment (0x42) · ROCs'; node.note = 'ROCs merged into this frame (upper 16 bits = ROC id).';
-    d.forEach((x, i) => node.fields.push(['ROC ' + i, `${x >>> 16} (${hx(x >>> 16, 4)})`]));
-  } else if (tag === 0x41) { node.name = 'Payload info segment (0x41) · ports'; node.note = 'One 16-bit entry per payload port: module, bond, lane, port.';
-    const hv = []; d.forEach(x => hv.push(x & 0xffff, x >>> 16)); hv.filter(x => x).forEach(x => node.fields.push(['Port ' + (x & 0x1f), `module ${(x >> 8) & 0xf}, bond ${(x >> 7) & 1}, lane ${(x >> 5) & 3}`])); }
-  return node;
-}
-function hitNode(x, abs) {
-  const t = ((x >>> 17) & 0x3fff) * 4, ch = (x >>> 13) & 0xf, q = x & 0x1fff;
-  return { kind: 'hit', name: `t ${t} ns · ch ${ch} · q ${q}`, meta: hx(x), words: [x], base: abs, hdr: 0,
-    note: 'Bits 30–17: time in 4 ns ticks from frame start. Bits 16–13: channel. Bits 12–0: charge.' + (q === 8191 ? ' q = 8191 is overflow.' : ''),
-    fields: [['Raw word', hx(x)], ['Time in frame', `${t} ns`], ['Channel', ch], ['Charge q', q]] };
-}
-let selRow = null;
-function renderNode(node, parentEl, path, open) {
-  const wrap = document.createElement('div'); wrap.className = 'node';
-  const row = document.createElement('div'); row.className = 'row'; row.tabIndex = 0; row.setAttribute('role', 'treeitem');
-  const hasKids = !!(node.kids || node.lazy);
-  row.innerHTML = `<span class="tw">${hasKids ? '▸' : ''}</span><span class="kind k-${node.kind}">${{ file: 'FILE', rec: 'REC', bank: 'BANK', seg: 'SEG', data: 'DATA', hit: 'HIT' }[node.kind]}</span><span class="nm"></span><span class="meta"></span>`;
-  row.querySelector('.nm').textContent = node.name; row.querySelector('.meta').textContent = node.meta || '';
-  wrap.appendChild(row); parentEl.appendChild(wrap);
-  let kidsEl = null, myPath = [...path, node.name];
-  const load = () => { if (node.lazy && !node.kids) { Object.assign(node, node.lazy()); delete node.lazy; myPath = [...path, node.name]; } };
-  const toggle = force => { if (!hasKids) return; load();
-    const want = force ?? (!kidsEl || kidsEl.hidden);
-    if (!kidsEl) { kidsEl = document.createElement('div'); kidsEl.className = 'kids'; node.kids.forEach(k => renderNode(k, kidsEl, myPath, false)); wrap.appendChild(kidsEl); }
-    kidsEl.hidden = !want; row.querySelector('.tw').textContent = want ? '▾' : '▸'; row.setAttribute('aria-expanded', want); };
-  const select = () => { load(); if (selRow) selRow.classList.remove('sel'); selRow = row; row.classList.add('sel'); showDetail(node, myPath); };
-  row.addEventListener('click', () => { select(); toggle(); });
-  row.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); select(); toggle(); } if (e.key === 'ArrowRight') toggle(true); if (e.key === 'ArrowLeft') toggle(false); });
-  wrap._toggle = toggle; wrap._node = node;
-  if (open) toggle(true);
-  return wrap;
-}
-function showDetail(node, path) {
-  const w = node.words || [], cap = 64; let hexs = '';
-  w.slice(0, cap).forEach((x, i) => { if (i % 4 === 0) hexs += `<span class="a">${hx((node.base + i) * 4, 6)}</span>`; hexs += `<span class="${i < node.hdr ? 'h' : ''}">${hx(x).slice(2)}</span>`; });
-  for (let i = 0; i < (4 - Math.min(w.length, cap) % 4) % 4; i++) hexs += '<span></span>';
-  $('detail').innerHTML = `<div class="path"></div><h2></h2><p></p><table class="fields">${(node.fields || []).map(([k, v]) => `<tr><td>${k}</td><td>${v}</td></tr>`).join('')}</table>
-    <div><div class="small" style="margin-bottom:4px">Raw words · byte offset in file · <span class="h">header</span>${w.length > cap ? ` · first ${cap} of ${w.length}` : ''}</div><div class="hex">${hexs}</div></div>`;
-  $('detail').querySelector('.path').textContent = path.join('  ›  ');
-  $('detail').querySelector('h2').textContent = node.name;
-  $('detail').querySelector('p').textContent = node.note || '';
-}
-function renderTree(S, focusRec) {
-  const tree = $('tree'); tree.innerHTML = ''; selRow = null;
-  const nR = S.recOff.length, from = page * 100, to = Math.min(nR, from + 100);
-  const root = { kind: 'file', name: S.name, meta: `${(S.size / 1e6).toFixed(1)} MB · ${fmt(nR)} records`, words: S.fh, base: 0, hdr: 14,
-    note: `EVIO v6, ${S.le ? 'little' : 'big'}-endian. Showing records ${fmt(from)}–${fmt(to - 1)}.`, fields: [['Size', fmt(S.size) + ' bytes'], ['Records', fmt(nR)], ['Events', fmt(S.nEvents)]],
-    kids: [fileHeaderNode(S), ...Array.from({ length: to - from }, (_, k) => ({ lazy: () => recordNode(S, from + k), kind: 'rec', name: 'Record ' + (from + k), meta: `@ byte ${hx(S.recOff[from + k] * 4, 6)}` }))] };
-  const top = renderNode(root, tree, [], true);
-  $('pgPrev').disabled = page === 0; $('pgNext').disabled = to >= nR;
-  const target = focusRec ?? from; if (target >= nR) return;
-  const recWrap = top.querySelectorAll(':scope > .kids > .node')[1 + target - from];
-  recWrap._toggle(true); const ev = recWrap.querySelectorAll(':scope > .kids > .node')[1];
-  if (ev) { ev._toggle(true); ev.querySelectorAll(':scope > .kids > .node').forEach(n => n._toggle(true)); }
-  recWrap.querySelector('.row').classList.add('sel'); selRow = recWrap.querySelector('.row'); showDetail(recWrap._node, [S.name, recWrap._node.name]);
-}
-$('pgPrev').onclick = () => { if (!TS) return; page = Math.max(0, page - 1); renderTree(TS); };
-$('pgNext').onclick = () => { if (!TS) return; page++; renderTree(TS); };
-$('recGo').addEventListener('change', () => { if (!TS) return; const r = Math.max(0, Math.min(TS.recOff.length - 1, +$('recGo').value | 0)); page = Math.floor(r / 100); renderTree(TS, r); });
-
-// =============== tabs, loading ===============
-function setTab(v) { if (!$('v-' + v)) v = 'overview'; document.querySelectorAll('.tab').forEach(t => t.setAttribute('aria-selected', t.dataset.v === v)); ['overview', 'plots', 'structure'].forEach(x => $('v-' + x).hidden = x !== v);
-  try { localStorage.setItem('evio-tab', v); } catch (e) {} }
-document.querySelectorAll('.tab').forEach(t => t.addEventListener('click', () => setTab(t.dataset.v)));
-try { const t = localStorage.getItem('evio-tab'); if (t) setTab(t); } catch (e) {}
-
-async function load(buf, name) {
-  $('stFile').textContent = name; $('stMsg').className = 'msg'; $('stMsg').textContent = 'Reading…'; $('prog').hidden = false; $('prog').firstElementChild.style.width = '0';
-  const t0 = performance.now();
-  try {
-    const S = await analyze(buf, f => { $('prog').firstElementChild.style.width = (f * 100).toFixed(0) + '%'; $('stMsg').textContent = `Decoding… ${(f * 100).toFixed(0)}%`; });
-    S.name = name; TS = S; page = 0;
-    $('app').hidden = false;
-    renderOverview(S); renderPlots(S); renderTree(S);
-    $('stMsg').textContent = `${(S.size / 1e6).toFixed(1)} MB decoded in ${((performance.now() - t0) / 1000).toFixed(1)} s.`;
-  } catch (e) { $('stMsg').className = 'err'; $('stMsg').textContent = e.message; }
-  $('prog').hidden = true;
-}
-async function loadFile(f) { $('stFile').textContent = f.name; $('stMsg').textContent = `Reading ${(f.size / 1e6).toFixed(1)} MB from disk…`; load(await f.arrayBuffer(), f.name); }
-$('fileIn').addEventListener('change', e => { if (e.target.files[0]) loadFile(e.target.files[0]); });
-$('openLbl').addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); $('fileIn').click(); } });
-addEventListener('dragover', e => { e.preventDefault(); document.body.classList.add('dragging'); });
-addEventListener('dragleave', e => { if (!e.relatedTarget) document.body.classList.remove('dragging'); });
-addEventListener('drop', e => { e.preventDefault(); document.body.classList.remove('dragging'); const f = e.dataTransfer.files[0]; if (f) loadFile(f); });
-
-// Folder browser (only when served by `pyevio web`, which provides /api/*)
-let brDir = '';
-const sizeStr = n => n >= 1e9 ? (n / 1e9).toFixed(2) + ' GB' : n >= 1e6 ? (n / 1e6).toFixed(1) + ' MB' : n >= 1e3 ? (n / 1e3).toFixed(0) + ' kB' : n + ' B';
-function showBrowser(on) { $('browser').hidden = !on; $('browseBtn').setAttribute('aria-expanded', on); }
-let brSeq = 0;
-async function browse(dir) {
-  const list = $('brList'), seq = ++brSeq;
-  try {
-    const r = await fetch('api/ls?dir=' + encodeURIComponent(dir) + ($('brAll').checked ? '&all=1' : ''), { cache: 'no-store' });
-    const j = await r.json();
-    if (seq !== brSeq) return;               // a newer request was made; drop this stale answer
-    if (j.error) { list.innerHTML = ''; const m = document.createElement('div'); m.className = 'bempty'; m.textContent = j.error; list.appendChild(m); return; }
-    brDir = j.dir; $('brPath').value = j.dir; $('brUp').disabled = !j.parent; $('brUp').dataset.parent = j.parent || '';
-    list.innerHTML = '';
-    const item = (cls, kind, name, size, onClick) => { const b = document.createElement('button'); b.type = 'button'; b.className = 'bitem ' + cls;
-      b.innerHTML = `<span class="bk">${kind}</span><span class="bn"></span><span class="bs">${size}</span>`; b.querySelector('.bn').textContent = name; b.title = name;
-      b.addEventListener('click', onClick); list.appendChild(b); };
-    j.dirs.forEach(d => item('dir', 'DIR', d + '/', '', () => browse(j.dir.replace(/\/+$/, '') + '/' + d)));
-    j.files.forEach(f => item('file', 'EVIO', f.name, sizeStr(f.size), () => loadPath(j.dir.replace(/\/+$/, '') + '/' + f.name, f.name, f.size)));
-    if (!j.dirs.length && !j.files.length) { const m = document.createElement('div'); m.className = 'bempty'; m.textContent = $('brAll').checked ? 'This folder is empty.' : 'No .evio files or folders here. Tick “all files” to see everything.'; list.appendChild(m); }
-  } catch (e) { list.innerHTML = '<div class="bempty">The server did not answer. Is <code>pyevio web</code> still running?</div>'; }
-}
-async function loadPath(path, name, size) {
-  $('stFile').textContent = name; $('stMsg').className = 'msg'; $('stMsg').textContent = `Reading ${sizeStr(size)} from ${path}…`;
-  try { const r = await fetch('api/file?path=' + encodeURIComponent(path)); if (!r.ok) throw new Error((await r.json()).error || 'HTTP ' + r.status);
-    showBrowser(false); await load(await r.arrayBuffer(), name); }
-  catch (e) { $('stMsg').className = 'err'; $('stMsg').textContent = 'Could not read the file: ' + e.message; }
-}
-$('browseBtn').addEventListener('click', () => { const on = $('browser').hidden; showBrowser(on); if (on && !$('brList').childElementCount) browse(brDir); });
-$('brUp').addEventListener('click', () => { if ($('brUp').dataset.parent) browse($('brUp').dataset.parent); });
-$('brGo').addEventListener('click', () => browse($('brPath').value.trim()));
-$('brPath').addEventListener('keydown', e => { if (e.key === 'Enter') browse($('brPath').value.trim()); });
-$('brAll').addEventListener('change', () => browse(brDir));
-(async () => {
-  let start = null;
-  try { const r = await fetch('api/start', { cache: 'no-store' }); if (r.ok) start = (await r.json()).dir; } catch (e) {}
-  if (!start) return;                       // opened as a plain file: only Open / drag-and-drop
-  $('browseBtn').hidden = false;
-  brDir = start; showBrowser(true); browse(start);
-})();
-</script>
-
-</body></html>
+<script type="module" src="app.js"></script>
+</body>
+</html>

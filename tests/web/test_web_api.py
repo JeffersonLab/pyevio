@@ -98,6 +98,15 @@ def test_structure_walk_to_hits(client, served_root):
     assert hits["children"][1]["t_ns"] == (100 + n) * fs.HIT_TIME_TICK_NS and not hits["children"][1]["flag"]
     assert hits["children"][0]["word"] == f"{fs_hit_word(0, n, 10 + n):08x}"
 
+    # F32: the 0x41 payload-port map arrives decoded by the decoder (uint16 entries in memory order, zero entries kept).
+    info = client.get(f"/api/files/{file_id}/structure", params={"node": payloads["children"][0]["id"]}).json()
+    assert [child["role"] for child in info["children"]] == ["time_slice", "payload_map"]
+    assert info["children"][1]["entries"] == [{"port": 1, "module_id": 0, "module": "fADC250"}, {"port": 3, "module_id": 0, "module": "fADC250"},
+                                              {"port": 5, "module_id": 0, "module": "fADC250"}]
+    sib = client.get(f"/api/files/{file_id}/structure", params={"node": banks["children"][0]["id"]}).json()
+    assert [child["role"] for child in sib["children"]] == ["time_slice", "aggregation_info"] and "entries" not in sib["children"][1]
+    assert record["node"]["compression"] == "none"
+
     dcrb = client.get(f"/api/files/{file_id}/structure", params={"node": banks["children"][2]["id"]}).json()
     dcrb_ports = {child.get("port"): child for child in dcrb["children"] if child["role"] != "roc_stream_info"}
     assert dcrb_ports[4]["role"] == "payload_words" and dcrb_ports[4]["module"] == "DCRB" and not dcrb_ports[4]["has_children"]

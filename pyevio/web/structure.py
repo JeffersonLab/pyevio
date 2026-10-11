@@ -37,6 +37,8 @@ DEFAULT_CHILDREN = 500
 MAX_CHILDREN = 5000
 MAX_NODE_DEPTH = 32
 NODE_PART = re.compile(r"^(r\d+|e\d+|b[0-9a-f]+|t)$")
+COMPRESSION_NAMES = {Record.COMPRESSION_NONE: "none", Record.COMPRESSION_LZ4: "lz4", Record.COMPRESSION_LZ4_BEST: "lz4_best",
+                     Record.COMPRESSION_GZIP: "gzip"}
 
 
 def page(items: list, start: int, count: int) -> dict:
@@ -62,7 +64,8 @@ def describe_record(record: Record, index: int, evio_file: Optional[EvioFile] = 
         "header_length": header.header_length, "header_type": header.header_type, "is_trailer": record.is_trailer,
         "event_count": header.event_count, "events_found": len(record.scan_events()),
         "index_array_length": header.index_array_length, "user_header_length": header.user_header_length,
-        "compression_type": header.compression_type, "compressed_length": header.compressed_data_length,
+        "compression_type": header.compression_type, "compression": COMPRESSION_NAMES.get(header.compression_type, str(header.compression_type)),
+        "compressed_length": header.compressed_data_length,
         "uncompressed_length": header.uncompressed_data_length, "version": header.version,
         "is_truncated": record.is_truncated, "declared_end": record.declared_end,
         "bit_info": {"raw": header.bit_info, "has_dictionary": header.has_dictionary, "is_last_record": header.is_last_record,
@@ -98,6 +101,18 @@ def describe_bank(bank: Bank, node_id: str, role: Optional[str] = None) -> dict:
     if role:
         data["role"] = role
     return data
+
+
+# Segments inside the stream-info banks of a frame; the AIS (0x42) is displayed as the file has it, never decoded.
+INFO_SEGMENT_ROLES = {fs.SIB_TSS_SEGMENT_TAG: "time_slice", fs.SIB_AIS_SEGMENT_TAG: "aggregation_info",
+                      fs.ROC_TSS_SEGMENT_TAG: "time_slice", fs.ROC_PAYLOAD_PORT_SEGMENT_TAG: "payload_map"}
+
+
+def payload_map_rows(evio_file: EvioFile, segment: Bank) -> List[dict]:
+    """The decoded entries of a 0x41 payload-port segment, zero entries included, from the decoder."""
+    words = fs.event_words(segment.mm, segment.data_offset, segment.data_length, evio_file.header.endian).tolist()
+    return [{"port": port, "module_id": module, "module": fs.MODULE_NAMES.get(module, str(module))}
+            for port, module in fs.payload_map_entries(words, segment.pad or 0, evio_file.header.endian == ">")]
 
 
 def _event_bank(evio_file: EvioFile, record_index: int, event_index: int) -> Bank:
@@ -139,13 +154,18 @@ def _bank_children(evio_file: EvioFile, chain: List[Bank], node_id: str) -> List
     children = []
     in_stream_frame = event.tag == fs.STREAM_EVENT_TAG
     labels = _payload_labels(evio_file, event) if (in_stream_frame and len(chain) == 2 and bank.tag != fs.SIB_TAG) else None
+    info_segments = in_stream_frame and len(chain) in (2, 3) and bank.tag in (fs.SIB_TAG, fs.ROC_STREAM_INFO_TAG)
     for child in bank.get_children():
         role = None
         if in_stream_frame and len(chain) == 1:
             role = "stream_info" if child.tag == fs.SIB_TAG else "roc_bank"
         elif labels is not None:
             role = "roc_stream_info" if child.tag == fs.ROC_STREAM_INFO_TAG else "payload"
+        elif info_segments:
+            role = INFO_SEGMENT_ROLES.get(child.tag)
         described = describe_bank(child, f"{node_id}/b{child.offset:x}", role)
+        if role == "payload_map":
+            described["entries"] = payload_map_rows(evio_file, child)
         if role == "roc_bank":
             described.update({"roc": child.tag, "stream": (child.num or 0) & 0xF})
         if role == "payload":
