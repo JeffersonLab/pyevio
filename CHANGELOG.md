@@ -1,12 +1,13 @@
 # Changelog
 
-All notable changes to pyevio are listed here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Finding numbers (F1—F62) refer to the project's defect ledger.
+All notable changes to pyevio are listed here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Finding numbers (F1—F68) refer to the project's defect ledger.
 
 ## [Unreleased]
 
 ### Added
 
 - `rust/`: a cargo workspace beside the Python package. `evio-stream` is a streaming, read-only EVIO v6 reader library over any `std::io::Read` (v6 files, bare record streams and the SRO 8-word block stream, both byte orders, LZ4/LZ4_BEST/gzip records, checked bank walk, fADC250 frame walk) with the `evio-count` and `evio-dump` tools; it reproduces the golden manifest, the corpus and the SRO reference numbers and decodes every hit of a 15.5 GB raw file in about 3 s on one thread. `evio-tui` is a minimal terminal viewer on top of it (records, events, bank tree and words, frame summary). See `rust/README.md`. Not part of the Python wheel.
+- `stream_stats.start_worker_services()`: starts the multiprocessing forkserver and resource tracker early, so a program that captures stderr (Textual replaces it with an object whose `fileno()` is -1) can still run the parallel analysis; `compute_stream_stats` calls it too (F63).
 - File check "AIS entries identical": the decoder counts the aggregation info segment entries and distinct values per frame; `stream_stats` and the viewer Overview report frames whose AIS repeats one stream's entry in every slot (F15).
 - Decode warnings: a malformed SIB segment after the time slice segment (an AIS whose length runs past the SIB end, or with no entries) touches no hit, so the decoder counts it in `warnings` / `warning_messages` (per frame and in total) instead of `errors`; `StreamHits.validate()` passes, `stream_stats` carries the totals, the viewer shows a "decode warnings" check, `pyevio debug` prints the messages and the Parquet example prints them to stderr (F58, F59). Stats version 3: caches written by versions 1 and 2 are recomputed.
 - `pyevio stats` prints the decode warnings and the AIS check (frames with an aggregation info segment, frames whose segment repeats one entry), the same checks the viewer shows (F61).
