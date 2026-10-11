@@ -22,9 +22,9 @@ A Python library and command-line tool for reading and inspecting EVIO (Event In
 | A trailer record with or without an index | exposed as `EvioFile.trailer`; it yields no events |
 | JLab SRO hardware stream: no file header, 8-word block headers with version word 4 and no bit-info bits | native, as `header_layout == "sro-8word"`; a final block cut by the end of the file keeps its complete events and is reported in `checks` |
 | EVIO v4 or v1—3 file written by the evio library | `ValueError` naming the version and pointing at the evio tools (`evio2xml`, `eviocopy`) |
-| EVIO v6 record stream without a file header (a buffer dump) | `ValueError` naming the shape and pointing at the evio tools |
+| EVIO v6 record stream without a file header (an evio writer buffer dump) | native, as `header_layout == "v6-records"`; records start at offset 0 and `EvioFile.header` is a stand-in |
 
-The SRO detection walks the whole chain of 8-word headers at open: a chain in which some header carries a bit-info bit (last-record, dictionary) or a 14-word header is an evio-library v4 file and raises the version error. The format details are in [docs/evio6_file_structure.md](docs/evio6_file_structure.md) (container format) and [docs/stream_decoding.md](docs/stream_decoding.md) (streaming fADC250 payload).
+The SRO detection walks the whole chain of 8-word headers at open: a chain in which some header carries a bit-info bit (last-record, dictionary) is an evio-library v4 file and raises the version error. The format details are in [docs/evio6_file_structure.md](docs/evio6_file_structure.md) (container format) and [docs/stream_decoding.md](docs/stream_decoding.md) (streaming fADC250 payload).
 
 ## Installation
 
