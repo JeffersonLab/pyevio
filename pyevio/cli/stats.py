@@ -6,8 +6,7 @@ from rich.table import Table
 from pyevio.decoders import fadc250_stream
 from pyevio.stream_stats import compute_stream_stats, default_workers, DEFAULT_RATE_BINS, DEFAULT_TICK_NS
 
-MODULE_NAMES = {fadc250_stream.MODULE_FADC250: "fADC250", fadc250_stream.MODULE_DCRB: "DCRB",
-                fadc250_stream.MODULE_UNKNOWN: "unmapped"}
+MODULE_NAMES = fadc250_stream.MODULE_NAMES
 
 
 def print_stats_summary(console, stats):

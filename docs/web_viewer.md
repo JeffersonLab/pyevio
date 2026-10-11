@@ -1,22 +1,45 @@
 # Web viewer
 
-`pyevio web` opens a page for browsing an EVIO v6 file: file checks, channel occupancy, rate, charge and timing plots, and a clickable structure tree from the file header down to single fADC hit words. Decoding runs in the browser, and the file is never uploaded.
+`pyevio web` opens a page for browsing an EVIO v6 file: file checks, channel occupancy, rate, charge and timing plots, a record table and a structure tree from the file header down to single fADC hit words. pyevio reads and decodes the file on the server; the browser receives JSON (histograms, record headers, tree nodes, requested words) and renders it. The file never leaves the machine it is on, and a 15 GB file produces the same few kilobytes per response as a 90 MB one.
 
-Plots are written for CODA streaming fADC250 files (0xFF60 built time frames). Any other EVIO v6 file shows the structure tree only.
+Plots are written for CODA streaming fADC250 files (0xFF60 built time frames). Any other EVIO v6 file shows the record table and the structure tree.
 
-## Start it
+## Install and start
+
+The server needs FastAPI and uvicorn, installed as the optional extra:
 
 ```bash
-pyevio web                       # file browser starts in the current folder
-pyevio web /path/to/runs         # or in another folder
-pyevio web --port 9000 --no-browser
+pip install 'pyevio[web]'
 ```
 
-Pick a file with **Browse folders**, **Open .evio file**, or by dragging it onto the page. A 93 MB file loads in under a second. The whole file is held in browser memory, so multi-GB files may not fit.
+```bash
+pyevio web                       # serve the current folder
+pyevio web /path/to/runs         # serve another folder
+pyevio web /path/to/runs --port 9000 --no-browser --workers 8 --cache-dir /scratch/pyevio-cache
+```
 
-The page also works without the server: open `pyevio/web/index.html` directly. Only the folder browser needs `pyevio web`.
+The command prints a URL of the form `http://127.0.0.1:8765/?token=…` and opens it in a browser (unless `--no-browser`). The token is random per start and required on every API request: another user on the same machine cannot read your files by guessing the port. Open the printed URL, including the token; a page without it shows nothing.
 
-**Files on a remote machine** (e.g. a farm node): run `pyevio web /path/to/runs --no-browser` there, connect with `ssh -L 8765:localhost:8765 user@host`, and open http://localhost:8765 locally. The server listens on localhost only.
+Only files under ROOT (the folder given on the command line, default the current folder) can be listed and opened. Paths are resolved with symlinks before the check, so a link that points outside ROOT is refused.
+
+### Analysis and cache
+
+Opening a file starts one analysis job on the server (`pyevio stats` on all cores minus two, or `--workers N`); the page shows its progress and the estimated time to completion. Opening another file cancels the running job. Results are cached as `.npz` under `~/.cache/pyevio/stats` (or `--cache-dir DIR`), keyed by the file path, size, modification time and the statistics version, so a second open of an unchanged file is immediate. The cache folder can be deleted at any time.
+
+### Files on a remote machine
+
+On a farm node, run the server there and forward the port over SSH:
+
+```bash
+# on the node
+pyevio web /path/to/runs --no-browser
+# on your machine
+ssh -L 8765:localhost:8765 user@node
+```
+
+Then open the URL the server printed on the node, token included, in a local browser. The server listens on 127.0.0.1 only and rejects requests whose `Host` header is not `localhost` or `127.0.0.1`, which also blocks web pages that reach the port through DNS rebinding.
+
+`--verbose` logs every request; by default only errors are logged.
 
 ## What it shows
 

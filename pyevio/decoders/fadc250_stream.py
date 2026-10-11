@@ -87,6 +87,7 @@ MAP_PORT_MASK = 0x1F
 MODULE_FADC250 = 0
 MODULE_DCRB = 1
 MODULE_UNKNOWN = 0xFF  # port not in the map, or no stream-info bank
+MODULE_NAMES = {MODULE_FADC250: "fADC250", MODULE_DCRB: "DCRB", MODULE_UNKNOWN: "unmapped"}
 
 # Only the first error messages of a batch are kept; the count is always exact.
 MAX_ERROR_MESSAGES = 50
