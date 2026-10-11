@@ -79,7 +79,7 @@ class OpenScreen(ModalScreen[Optional[Path]]):
             yield Label("Open an EVIO file — type a path and press Enter, or pick one below")
             yield Input(value=str(self.root), placeholder="path to a file or folder", id="open-path")
             yield EvioDirectoryTree(self.root, id="open-tree")
-            yield Label("Enter opens · Backspace goes to the parent folder · Ctrl+A shows every file · Escape cancels", id="open-hint")
+            yield Label("Enter opens · in the tree (Tab): Backspace goes to the parent folder, Ctrl+A shows every file · Escape cancels", id="open-hint")
 
     def reroot(self, folder: Path) -> None:
         self.root = folder
@@ -277,6 +277,9 @@ class PyEvioGui(App):
             status.show(f"{name} — analysis {state}", None)
             if progress["error"]:
                 self.show_error(progress["error"])
+            return
+        if not progress["records_total"]:
+            status.show(f"{name} — scanning the records…", None)
             return
         eta = f", {progress['eta_s']:.0f} s left" if progress["eta_s"] else ""
         status.show(f"{name} — analyzing {progress['records_done']:,} of {progress['records_total']:,} records{eta}",

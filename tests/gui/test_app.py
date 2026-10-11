@@ -9,7 +9,6 @@ from conftest import pilot_wait  # noqa: E402
 from pyevio.gui.app import OpenScreen, PyEvioGui, StatusStrip  # noqa: E402
 from pyevio.gui.overview import OverviewPane  # noqa: E402
 from pyevio.gui.records import RecordsPane  # noqa: E402
-from pyevio.gui.structure import StructurePane  # noqa: E402
 
 
 def status_text(app):
@@ -76,7 +75,6 @@ async def test_start_without_a_file_shows_the_open_screen(session, synthetic):
         assert "No file open" in status_text(app)
         app.screen.query_one("#open-path", Input).value = str(synthetic["path"])
         await pilot.press("enter")
-        await pilot_wait(pilot, lambda: app.query_one(StructurePane).query_one("#structure-path", Static).render() is not None
-                         and session.is_open, what="file to open")
+        await pilot_wait(pilot, lambda: session.is_open, what="file to open")
         await pilot_wait(pilot, lambda: app.query_one(OverviewPane).summary is not None, what="stats_ready")
         assert "analysis done" in status_text(app)
