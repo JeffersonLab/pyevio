@@ -21,6 +21,7 @@ All notable changes to pyevio are listed here. The format follows [Keep a Change
 - `pyevio stats FILE [--out FILE.npz] [--workers N] [--rate-bins N] [--tick-ns X] [--records N]`.
 - `pyevio debug` prints a stream-frame summary for 0xFF60 events and the module, hits and other-module words per ROC bank.
 - `pyevio web`: a browser viewer for CODA streaming fADC250 files (`docs/web_viewer.md`), and `examples/fadc250_stream_to_parquet.py`, which writes the hits of a file to Parquet.
+- `pyevio gui [FILE | FOLDER]`: a console viewer (Textual, optional extra `pyevio[gui]`) with the browser viewer's four tabs in the terminal — file checks and totals, plotext plots at file, ROC and channel level, the paged record table and the structure tree down to hit words with a detail panel of fields and raw words — plus a file-open screen; it reads through the same `pyevio.web` model functions as `pyevio web` and shares its statistics cache (`--cache-dir`, `--workers`), and `s` / `S` save the plots as PNG through matplotlib (`docs/console_gui.md`).
 - Golden-set harness `tests/golden/test_golden.py` (one test per row of the evio golden manifest, path in `GOLDEN_MANIFEST`) and the SRO corpus tests `tests/golden/test_corpus.py` (`PYEVIO_CORPUS=1`).
 - Documentation: `docs/stream_decoding.md` (frame layout, hit word, time units, striping, `stream_stats` outputs, file quirks); `docs/evio6_file_structure.md` gains an SRO hardware layout section.
 
@@ -36,10 +37,12 @@ All notable changes to pyevio are listed here. The format follows [Keep a Change
 - `RecordHeader.parse()` and `BufferReader` raise without printing hex dumps first.
 - Packaging: pytest, pyyaml and pyarrow sit in the default `dev` dependency group, so `uv run pytest` works without extras; setuptools package discovery is restricted to `pyevio*`.
 - `pyevio web` cache key: the file path, size and modification time without the stats version. An entry written by another version is recomputed and overwritten at the same name instead of staying behind as an orphan (F60).
+- `textual` leaves the core dependencies: it is installed by the `pyevio[gui]` extra (with `textual-plotext`) only, so the library installs with click, lz4, rich, numpy and matplotlib.
 
 ### Removed
 
 - `docs/evio_roc_time_slice_bank.md` and `docs/evio_roc_tsb.png`: the bank layout they described does not match SRO data (F41). `docs/specs.md` moves to `docs/history/specs.md` as the pre-fix goal statement.
+- The `pyevio ui` command and the `pyevio/ui/` package (a hard-coded sample tree); `pyevio gui` replaces them.
 
 ### Fixed
 

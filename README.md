@@ -12,6 +12,7 @@ A Python library and command-line tool for reading and inspecting EVIO (Event In
 - Walking the bank tree of an event (banks, segments, tagsegments) with every length checked against its container
 - Converting bank data to NumPy arrays
 - Decoding CODA streaming fADC250 time frames into hit arrays and computing histograms and file checks over a whole file in one parallel pass
+- Browsing a file — checks, plots, record table, structure tree — in a browser (`pyevio web`, [docs/web_viewer.md](docs/web_viewer.md)) or in the terminal over SSH (`pyevio gui`, [docs/console_gui.md](docs/console_gui.md)); the two share one statistics cache
 
 ## What pyevio reads
 
@@ -171,7 +172,8 @@ pyevio hex run.evio 256 --bytes --endian '<'   # the default is big-endian
 
 ```bash
 pyevio ana run.evio --per-record           # event tag statistics over the file
-pyevio gui run.evio                        # console viewer (Textual; pip install 'pyevio[gui]')
+pyevio gui run.evio                        # console viewer (Textual), see docs/console_gui.md
+pyevio gui /path/to/runs                   # the same, picking a file from a folder
 pyevio web /path/to/runs                   # browser viewer, see docs/web_viewer.md
 ```
 
