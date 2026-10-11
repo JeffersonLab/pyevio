@@ -5,7 +5,7 @@ A big factor for introducing yet another evio version was the desire to compress
 
 **FILE FORMAT**
 
-Below is a diagram of how an HIPO/evio6 file is laid out. Each file has its own file header which appears once, at the very beginning of the file. It is always uncompressed. That is followed by an optional, uncompressed index array which contains pairs of 4-byte integers. Each pair, one pair per record, is the length of a record in bytes followed by the event count in that record. Generally, the index array is not used with evio files.
+Below is a diagram of how an HIPO/evio6 file is laid out. Each file written by the evio library has its own file header which appears once, at the very beginning of the file. It is always uncompressed. The raw files the JLab SRO hardware writes have no file header; see "SRO hardware layout" below. That is followed by an optional, uncompressed index array which contains pairs of 4-byte integers. Each pair, one pair per record, is the length of a record in bytes followed by the event count in that record. Generally, the index array is not used with evio files.
 
 That, in turn, is followed by an optional, uncompressed user header which is just an array of data to be defined by the user. This array is padded to a 4-byte boundary. To be more specific, it holds user data in HIPO files, but in evio files the user header will only store any dictionary or first event provided to the file writer. The dictionary and first event are placed into a record and written out as the user header. More on records later. Finally, any index array and user header is followed by any number of records including the last record which may be a trailer. More on the trailer later.
 
@@ -70,7 +70,7 @@ After the file header, index array, and user header, the file is divided into **
 
 **![](data:image/jpeg;base64...)**
 
-Each record has a header. The header is followed by an index of events lengths – one word per length in the unit of bytes. This index is **not** optional.
+Each record has a header. The header is followed by an index of event lengths – one word per length in the unit of bytes. The evio library always writes this index. Some writers omit it (index array length 0, as the SRO hardware does); pyevio then walks the events by the length word of each event bank, bounded by the record's event count and data end.
 
 It is followed by an optional user header which functions in the same manner as the one in the file layout. It is an array of data defined by the user. This array is padded to a 4-byte boundary. For the evio format, if writing to a file, any dictionary and/or first event are exclusively placed in the file’s user header and nothing is ever placed in a record’s user header. If writing to a buffer, any dictionary and/or first event are exclusively placed in the user header in the format of a record (in other words, a record within a record). The EventWriter class, when writing to a buffer only writes one record and so that will contain the dictionary/first event. If using the Writer class, it’s data format agnostic and any user data may be written with any record as part of the user header.
 
@@ -104,14 +104,14 @@ MSB(31)                           LSB(0)
 
 1. The record length is number of 32 bit words in the record (including itself). In general, this will vary from record to record.
 2. The record number is an id # used by the event writer. Can be used by reader to ensure data is received in the proper order.
-3. The header length is the number of 32 bit words in this header - set to 14 by default. This can be made larger but not smaller. Even though, theoretically, it can be changed, there are no means to do this or take advantage of the extra memory through the evio libraries.
+3. The header length is the number of 32 bit words in this header - set to 14 by default. The evio library never writes another value. The SRO hardware writes 8-word headers that stop after the magic number (see "SRO hardware layout"); pyevio reads both and treats words 8—13 of an 8-word header as 0.
 4. The event count is the number of events in this record - always integral.
 5. The index array length is the length, in bytes, of the following index of event lengths.
 6. The version is the current evio format version number (6) and takes up the lowest 8 bits. The bit info word is used to store the various useful data listed in the table below.
 7. The user “header” is just a user-defined array which may contain anything. This record header entry is the length of the user header in bytes. If writing to a buffer and if there is a dictionary / first event, they will be stored in the user header and the length of that data will be stored here. If writing to a file, there is no user header data in a record so this entry will be 0.
 8. The magic number is the value 0xc0da0100 and is used to check endianness.
-9. The uncompressed data length is the padded length, in bytes, of the entire uncompressed record.
-10. The highest 4 bits signify the type of compression used in the record (see table below). The other bits contain the padded length of the compressed data in 32-bit words.
+9. The uncompressed data length is the length, in bytes, of the events alone. The index array and the user header are not included: the evio C++ and Java writers store the event bytes here in every record, and pyevio sizes the decompressed buffer as index array length + padded user header length + this word.
+10. The highest 4 bits signify the type of compression used in the record (see table below). The other bits contain the padded length of the compressed data in 32-bit words; pad 3 (bits 24—25 of the bit info word) counts the filler bytes in the last word that are not part of the compressed stream. The compressed data starts right after the header; LZ4 and LZ4_BEST use the LZ4 block format (no frame header).
 11. User register #1, 64 bits.
 12. User register #2, 64 bits.
 
@@ -156,7 +156,9 @@ In an evio file, the ending record can, but does not have to be, a regular recor
 
 **TRAILER’S HEADER**
 
-In either case, bit #10 of the bit info word in the record header needs to be set – indicating that this is the last record. In the case of the trailer, bits 28-31 (seen in the table above) will indicate that this is a trailer. For an evio trailer, the value in those bits is 3. Also, the version number is placed in that same word. Everything after the magic number is 0.
+In either case, bit #9 of the bit info word in the record header needs to be set – indicating that this is the last record (bit #10 is the file header's "trailer has an index" flag). In the case of the trailer, bits 28-31 (seen in the table above) will indicate that this is a trailer. For an evio trailer, the value in those bits is 3. Also, the version number is placed in that same word, which makes the word 0x30000206 for a plain evio trailer. The event count is 0. Everything after the magic number is 0.
+
+pyevio exposes the trailer as `EvioFile.trailer` and excludes it from `record_count` and `iter_records()`; `Record.scan_events()` returns no events for it, because its index array lists records.
 
 MSB(31)                           LSB(0)
 <-------------------- 32 bits ------------------>
@@ -170,7 +172,7 @@ MSB(31)                           LSB(0)
 | **Index Array Length** |
 | **0x 30 00 02 06** |
 | **0** |
-| **0xcoda0100** |
+| **0xc0da0100** |
 | **0** |
 | **0** |
 | **0** |
@@ -184,7 +186,18 @@ If the file header’s index array is non-existent, the trailer position can be 
 
 If no record length information is available in either the file header or the trailer, the reader will scan the whole file from beginning to end to obtain it.
 
-**Chapter 11**
+pyevio always scans: it ignores the file header's index array and trailer position and steps from record header to record header by the record length word. Before a header is used it must hold the magic number at word 7, a header length of 8 or 14 with those words present, a record length of at least the header length, and no file type id in word 0 (which marks a second file header, as in two files concatenated). Bytes that fail this end the scan with a `("bad_record_header", offset, message)` entry in `EvioFile.checks`. A record whose length runs past the end of the file is kept as the last record, its complete events are read, and `("truncated_tail", declared_bytes, present_bytes, events_salvaged)` goes to `checks`. The scan continues past a record with the last-record bit set while another record header follows, because some writers set the bit on every record.
+
+**SRO HARDWARE LAYOUT**
+
+The raw files written by the JLab SRO hardware (for example `sro_000791.evio.00000`) carry EVIO v6 streaming events in a container that predates the v6 file layout:
+
+* No file header. The first block header starts at byte 0.
+* Every block header is 8 words: `{block length (words), block number, 8, event count, 0, 4, 0, 0xc0da0100}`. Word 5 is exactly 4: version 4 with no bit-info bits. Words 8—13 of the v6 record header (uncompressed length, compression, user registers) do not exist, so the blocks are uncompressed and hold no user header.
+* No index array: the events follow the header directly and are walked by their length words.
+* The last-record bit is never set and there is no trailer. The file ends after its last block, and the last block may be cut by the end of the file (3 of the 4 files of run 791 end this way).
+
+The first block of an evio-library v4 file has the same shape, so a file without a file type id is identified by its whole header chain: every 8-word header must have word 5 equal to 4. A header with the last-block bit (0x200) or the dictionary bit (0x100) set, a version other than 4, or a 14-word header marks an evio-library file, and pyevio raises the version error for it. pyevio reports the layout as `EvioFile.header_layout == "sro-8word"`, with a stand-in `FileHeader` whose `version` is 6 (the content) and `container_version` 4 (the block headers); `trailer` is `None` and `record_count` comes from the scan, the cut tail included.
 
 # EVIO Data Format
 
