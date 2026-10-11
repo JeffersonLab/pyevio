@@ -175,3 +175,6 @@ cython_debug/
 pyevio/repomix-output.txt
 
 repomix-output.txt
+
+# Rust build output
+rust/target/

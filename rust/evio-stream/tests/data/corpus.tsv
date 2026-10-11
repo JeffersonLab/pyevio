@@ -1,0 +1,10 @@
+# generated from evio-optim golden_manifest/corpus.yaml
+# columns: path, compression, records, event_count, salvaged_events
+/data/evio-lib/corpus/sro_000791.evio.00000.v6	none	7891	86794	2
+/data/evio-lib/corpus/sro_000791.evio.00000.v6.lz4	lz4	7891	86794	2
+/data/evio-lib/corpus/sro_000791.evio.00001.v6	none	7892	86805	10
+/data/evio-lib/corpus/sro_000791.evio.00001.v6.lz4	lz4	7892	86805	10
+/data/evio-lib/corpus/sro_000791.evio.00002.v6	none	7890	86790	8
+/data/evio-lib/corpus/sro_000791.evio.00002.v6.lz4	lz4	7890	86790	8
+/data/evio-lib/corpus/sro_000791.evio.00003.v6	none	7891	86801	0
+/data/evio-lib/corpus/sro_000791.evio.00003.v6.lz4	lz4	7891	86801	0
