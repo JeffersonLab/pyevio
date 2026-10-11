@@ -1,9 +1,9 @@
 """The Parquet example and `pyevio debug` on a synthetic streaming file.
 
 Both callers use pyevio.decoders.fadc250_stream; these tests pin that the
-example survives the I17 frame shape (a last ROC bank without children),
+example survives the F17 frame shape (a last ROC bank without children),
 sorts hits by (frame, event, t_ns) so duplicate frames keep valid hit
-ranges (I20), and that the debug command decodes a stream frame.
+ranges (F20), and that the debug command decodes a stream frame.
 """
 import importlib.util
 import struct
@@ -42,10 +42,10 @@ def make_record(number, events):
 
 
 def write_stream_file(path):
-    """Two records: frame 100 (two hits, I17 shape), a non-stream event, then frame 100 again and frame 104."""
+    """Two records: frame 100 (two hits, F17 shape), a non-stream event, then frame 100 again and frame 104."""
     frame_100_a = stream_frame(100, 1000, [
         roc_bank(7, 1, 100, 1000, [(1, [hit_word(2, 50, 10), hit_word(2, 30, 20)])]),
-        bank(7, 0x10, 0x22, []),  # I17: last ROC bank has no children
+        bank(7, 0x10, 0x22, []),  # F17: last ROC bank has no children
     ])
     other = bank(0xFF50, 0x10, 0, bank(1, 1, 0, [1, 2]))
     frame_100_b = stream_frame(100, 1000, [roc_bank(9, 2, 100, 1000, [(2, [hit_word(4, 40, 30)]), (4, [])])])

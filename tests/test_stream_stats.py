@@ -101,7 +101,7 @@ def test_synthetic_file_totals_and_checks(tmp_path, workers):
     assert checks.first_frame == 1000 and checks.last_frame == max(frame_numbers)
     assert stats.frames["frame"].tolist() == frame_numbers
     assert stats.frames["n_hits"].tolist()[:2] == [17, 18]
-    # I15: every frame's AIS repeats one entry in its 24 slots
+    # F15: every frame's AIS repeats one entry in its 24 slots
     assert stats.frames_with_ais == stats.frames_with_degenerate_ais == 12
     assert stats.frames["n_ais_entries"].tolist() == [24] * 12 and stats.frames["n_ais_distinct"].tolist() == [1] * 12
 
@@ -178,7 +178,7 @@ def test_corpus_first_200_records_match_decoder():
     assert stats.checks.frame_period_ticks == 65536
     assert int(stats.rate_counts.sum()) == decoded.n_hits and int(stats.occupancy.sum()) == decoded.n_hits
     assert stats.errors == 0 and stats.n_trailer_records == 0
-    # I15: every frame of the run carries a 24-slot AIS holding one value
+    # F15: every frame of the run carries a 24-slot AIS holding one value
     assert stats.frames_with_ais == stats.frames_with_degenerate_ais == 2200
     assert int(fs.ais_degenerate_mask(decoded.frames).sum()) == 2200
     assert np.unique(decoded.frames["n_ais_entries"]).tolist() == [24] and np.unique(decoded.frames["n_ais_distinct"]).tolist() == [1]

@@ -146,7 +146,7 @@ def test_decode_frame_columns(endian):
     assert (frame.n_ais_entries, frame.n_ais_distinct) == (24, 1)
 
 
-# ---------------------------------------------------------------- AIS segment (I15)
+# ---------------------------------------------------------------- AIS segment (F15)
 @pytest.mark.parametrize("endian", ["<", ">"])
 def test_ais_entries_are_counted_identical_and_distinct(endian):
     """The decoder counts the AIS entries and their distinct values per frame; it never walks the AIS for ROC banks."""
@@ -210,7 +210,7 @@ def test_non_stream_event_is_not_an_error():
 
 
 def test_last_roc_bank_without_children_i17():
-    """I17: the Parquet example crashed on a frame whose last ROC bank has no children (length 1)."""
+    """F17: the Parquet example crashed on a frame whose last ROC bank has no children (length 1)."""
     words = stream_frame(FRAME_NUMBER, TIMESTAMP, [
         roc_bank(7, 1, FRAME_NUMBER, TIMESTAMP, [(1, HITS_A)]),
         bank(7, 0x10, 0x22, []),
@@ -436,5 +436,5 @@ def test_corpus_record0_hits_match_payload_word_sums():
     assert fs.non_fadc_words_per_port(hits.non_fadc_banks) == {k: v for k, v in expected_dcrb_per_port.items() if v}
     assert hits.non_fadc_words == sum(expected_dcrb_per_port.values()) == 400_546
     assert hits.n_hits + hits.non_fadc_words == hits.n_payload_words == 499_660
-    # I15: every AIS lists 24 slots holding one value (one stream's entry repeated).
+    # F15: every AIS lists 24 slots holding one value (one stream's entry repeated).
     assert hits.frames["n_ais_entries"].tolist() == [24] * 11 and hits.frames["n_ais_distinct"].tolist() == [1] * 11

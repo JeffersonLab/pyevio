@@ -34,7 +34,7 @@ What one test checks
    ``"v6-records"`` and checked like the v6 rows (the dictionary in the
    record user header of ``buffer_evw_dict_le.dump`` is skipped, not read).
 3. v4 and v1—3 rows: ``EvioFile`` raises ``ValueError`` whose message names
-   the detected version and points at the evio tools (the I9 contract, see
+   the detected version and points at the evio tools (the F9 contract, see
    ``assert_unsupported_version_message``).
 4. v6 rows: the header event-count sum equals the manifest count, the
    events found by ``Record.scan_events`` number the same, and no event
@@ -72,7 +72,7 @@ if not os.path.isdir(GOLDEN_ROOT):
 
 
 # EVIO version each legacy row carries in word 5 of its first block header.
-# These rows must fail with the I9 message instead of being read.
+# These rows must fail with the F9 message instead of being read.
 LEGACY_VERSION = {
     "v4_le.evio": 4,
     "v4_be.evio": 4,
@@ -107,7 +107,7 @@ def sha256_of(path):
 
 
 def assert_unsupported_version_message(message, version):
-    """The I9 contract for files pyevio does not read.
+    """The F9 contract for files pyevio does not read.
 
     The message names the detected EVIO version ("version 4") and tells the
     reader where to go: an evio tool (evio2xml, eviocopy) or the evio

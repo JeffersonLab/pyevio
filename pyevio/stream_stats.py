@@ -366,7 +366,7 @@ class StreamStats:
     errors: int
     error_messages: List[str]
     frames_with_ais: int  # frames whose SIB holds an aggregation info segment (0x42)
-    frames_with_degenerate_ais: int  # of those, frames whose entries all hold one value (I15)
+    frames_with_degenerate_ais: int  # of those, frames whose entries all hold one value (F15)
     checks: FrameChecks
     rocs: np.ndarray
     ports: np.ndarray
