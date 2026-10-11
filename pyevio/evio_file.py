@@ -23,9 +23,15 @@ class EvioFile:
     the file ends in a plain record).
 
     Layouts: ``header_layout`` names how the file starts. ``"v6"`` is a
-    14-word file header followed by 14-word record headers. Files without a
-    file header (EVIO v4 blocks, v1—3 blocks) raise ``ValueError`` naming
-    the version at open.
+    14-word file header followed by 14-word record headers. ``"sro-8word"``
+    is the JLab SRO hardware stream: no file header, 8-word block headers
+    with version word exactly 4 (see ``FileHeader``); ``header`` is then a
+    stand-in ``FileHeader`` with ``layout == "sro-8word"``, each record
+    header has ``header_length == 8``, ``trailer`` is None, and a final
+    block cut by the end of the file is the last record with its complete
+    events (``checks`` reports the byte counts). Any other file without a
+    file header (EVIO v4 blocks with bit-info bits set, v1—3 blocks) raises
+    ``ValueError`` naming the version at open.
 
     Checks: ``checks`` lists what the record scan found wrong with the file
     as tuples whose first item names the check: ``("truncated_tail",
@@ -78,6 +84,8 @@ class EvioFile:
         self._trailer_offset: Optional[int] = None
         self.checks: List[tuple] = []
         self._record_offsets = self._scan_record_offsets()
+        if self.header_layout == FileHeader.LAYOUT_SRO:
+            self.header.record_count = len(self._record_offsets)
 
         # Total event count cache
         self._total_event_count = None
@@ -87,10 +95,10 @@ class EvioFile:
 
         Every EVIO header layout carries the magic word at word 7, so the byte
         order comes from there. A file type id in word 0 means a v6 file
-        header. Anything else is a bare block or record header at offset 0:
-        its version sits in the low byte of word 5. Only version 6 with a
-        file header is read here; other versions raise the one unsupported-
-        version error.
+        header. Anything else is a bare block header chain at offset 0: the
+        SRO hardware stream (every block header version 4 with no bit-info
+        bits) is read; any other version, or a v4 chain with bit-info bits
+        set, raises the one unsupported-version error.
         """
         endian = detect_endian(self.mm, 0)
         if endian is None:
@@ -99,10 +107,50 @@ class EvioFile:
 
         first_word = struct.unpack(endian + 'I', self.mm[0:4])[0]
         if file_type_name(first_word) is not None:
-            return "v6", FileHeader.from_buffer(self.mm, 0)
+            return FileHeader.LAYOUT_V6, FileHeader.from_buffer(self.mm, 0)
 
-        block_version = struct.unpack(endian + 'I', self.mm[20:24])[0] & 0xFF
-        raise unsupported_version_error(block_version, f"block header at offset 0, no file header: {self.filename}")
+        self._require_sro_block_chain(endian)
+        return FileHeader.LAYOUT_SRO, FileHeader.for_sro_stream(endian)
+
+    def _require_sro_block_chain(self, endian: str) -> None:
+        """Raise the unsupported-version error unless every block header has the SRO shape.
+
+        The first block of a v4 file written by the evio library is identical
+        to an SRO block (version 4, bit-info 0, header length 8), so the
+        whole chain is walked: a v4 file sets the last-block bit (0x200) on
+        its final block or the dictionary bit (0x100) on its first. The walk
+        reads 8 words per block and stops at the end of the file, at a block
+        cut by it, or at bytes that are no block header (the record scan
+        reports those).
+        """
+        offset = 0
+        header_count = 0
+        while offset + 32 <= self.file_size:
+            words = struct.unpack(endian + '8I', self.mm[offset:offset + 32])
+            length_words, _, header_length, _, _, bit_info_version, _, magic = words
+            if magic != RecordHeader.MAGIC_NUMBER:
+                break
+            version = bit_info_version & 0xFF
+            if header_length == 14 and version == 6:
+                # A v6 record stream with no file header (a buffer dump): not an SRO block.
+                raise ValueError(f"EVIO version 6 record stream without a file header is not supported "
+                                 f"(14-word record header at offset 0x{offset:X} of {self.filename}); pyevio reads "
+                                 f"EVIO version 6 files with a file header and SRO streaming files. Convert the "
+                                 f"buffer with the evio tools (evio2xml, eviocopy) or read it with the evio library.")
+            if header_length != 8:
+                break
+            if version != 4:
+                raise unsupported_version_error(version, f"block header at offset 0x{offset:X}, no file header: {self.filename}")
+            if not RecordHeader.is_sro_block_word(bit_info_version):
+                raise unsupported_version_error(4, f"block header at offset 0x{offset:X} has bit-info 0x{bit_info_version >> 8:X}, "
+                                                   f"an evio-library v4 file rather than an SRO stream: {self.filename}")
+            header_count += 1
+            if length_words < 8:
+                break
+            offset += length_words * 4
+        if header_count == 0:
+            block_version = struct.unpack(endian + 'I', self.mm[20:24])[0] & 0xFF
+            raise unsupported_version_error(block_version, f"block header at offset 0, no file header: {self.filename}")
 
     def close(self) -> None:
         """Release the mmap and the file.
@@ -151,25 +199,23 @@ class EvioFile:
         offset = self.first_record_offset
 
         while offset < self.file_size:
-            try:
-                record = Record(self.mm, offset, self.header.endian)
-            except ValueError as error:
-                # Bytes that are no record header end the scan (F6 tightens this).
-                self.checks.append(("bad_record_header", offset, str(error)))
+            # Bytes that are no record header (garbage, a second file header
+            # of a concatenated file, a header the scan cannot step over) end
+            # the scan with a check instead of a record.
+            problem = self._record_header_problem(offset)
+            if problem is None:
+                try:
+                    record = Record(self.mm, offset, self.header.endian)
+                except ValueError as error:
+                    problem = str(error)
+            if problem is not None:
+                self.checks.append(("bad_record_header", offset, problem))
                 break
 
             # The trailer closes the file: it lists records, holds no events
             # and is exposed as `trailer`, never as a data record.
             if record.header.is_trailer:
                 self._trailer_offset = offset
-                break
-
-            # A record shorter than its header (or an 8-word-short header)
-            # cannot be stepped over: the scan would stand still.
-            if record.header.header_length < 8 or record.size < record.header_size:
-                self.checks.append(("bad_record_header", offset,
-                                    f"record declares {record.header.record_length} words "
-                                    f"with a {record.header.header_length}-word header"))
                 break
 
             record_offsets.append(offset)
@@ -201,12 +247,39 @@ class EvioFile:
             self._trailer = Record(self.mm, self._trailer_offset, self.header.endian)
         return self._trailer
 
+    def _record_header_problem(self, offset: int) -> Optional[str]:
+        """Why no record header can start at offset, or None when one can.
+
+        A record header is 8 or 14 words with the magic at word 7, a record
+        length of at least the header, and no file type id in word 0 (that
+        is a file header, as in two files concatenated). The record length
+        may run past the end of the file: that is a truncated tail, which
+        the scan keeps as the last record.
+        """
+        if offset + 32 > self.file_size:
+            return f"{self.file_size - offset} bytes left, a record header needs 32"
+        words = struct.unpack(self.header.endian + '8I', self.mm[offset:offset + 32])
+        length_words, _, header_length, _, _, _, _, magic = words
+        if file_type_name(words[0]) is not None:
+            return f"file header ({file_type_name(words[0])}) where a record header should start"
+        if magic != RecordHeader.MAGIC_NUMBER:
+            swapped = int.from_bytes(magic.to_bytes(4, "little"), "big")
+            hint = " (byte-swapped record header)" if swapped == RecordHeader.MAGIC_NUMBER else ""
+            return f"no magic number at word 7 (0x{magic:08X}){hint}"
+        if header_length not in (8, 14):
+            return f"header length {header_length}, expected 8 or 14"
+        if offset + header_length * 4 > self.file_size:
+            return f"{self.file_size - offset} bytes left, the {header_length}-word header needs {header_length * 4}"
+        if length_words < header_length:
+            return f"record length {length_words} words is shorter than its {header_length}-word header"
+        return None
+
     def _is_record_at(self, offset: int) -> bool:
-        """Check whether a record header (magic word in word 7) starts at offset."""
-        if offset + RecordHeader.HEADER_SIZE > self.file_size:
+        """Whether a whole record (valid header, length inside the file) starts at offset."""
+        if self._record_header_problem(offset) is not None:
             return False
-        magic = struct.unpack(self.header.endian + 'I', self.mm[offset + 28:offset + 32])[0]
-        return magic == RecordHeader.MAGIC_NUMBER
+        length_words = struct.unpack(self.header.endian + 'I', self.mm[offset:offset + 4])[0]
+        return offset + length_words * 4 <= self.file_size
 
     @property
     def record_count(self) -> int:

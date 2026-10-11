@@ -55,6 +55,19 @@ def unsupported_version_error(version: int, detail: str = "") -> ValueError:
 class FileHeader:
     """
     Parses and represents an EVIO v6 file header.
+
+    ``layout`` names the container the header describes:
+
+    - ``"v6"`` — the 14-word file header read from the file, followed by
+      14-word record headers.
+    - ``"sro-8word"`` — the JLab SRO hardware stream: no file header at all,
+      8-word block headers ``{length, block number, 8, event count, 0, 4,
+      0, magic}`` whose version word says 4 with no bit-info bits. The
+      events are EVIO v6 streaming content (tag 0xFF60 frames), so
+      ``version`` reports 6 and ``container_version`` keeps the 4 the block
+      headers carry. Every field that only a file header could supply
+      (file number, user register, trailer position) is 0;
+      ``record_count`` is filled from the record scan.
     """
 
     # EVIO magic number and bytes
@@ -64,8 +77,13 @@ class FileHeader:
     # Size of file header in bytes
     HEADER_SIZE = 56  # 14 words * 4 bytes
 
+    LAYOUT_V6 = "v6"
+    LAYOUT_SRO = "sro-8word"
+
     def __init__(self):
         """Initialize an empty FileHeader object"""
+        self.layout = self.LAYOUT_V6
+        self.container_version = None
         self.file_type_id = None
         self.file_type = None
         self.file_number = None
@@ -136,12 +154,36 @@ class FileHeader:
 
         if header.version != 6:
             raise unsupported_version_error(header.version, "file header")
+        header.container_version = header.version
 
         # Parse bit_info fields
         header.has_dictionary = bool((header.bit_info >> 0) & 1)  # Bit 8
         header.has_first_event = bool((header.bit_info >> 1) & 1)  # Bit 9
         header.has_trailer = bool((header.bit_info >> 2) & 1)  # Bit 10
 
+        return header
+
+    @staticmethod
+    def for_sro_stream(endian: str) -> 'FileHeader':
+        """The stand-in header of an SRO hardware stream (layout ``"sro-8word"``, see the class docstring)."""
+        header = FileHeader()
+        header.layout = FileHeader.LAYOUT_SRO
+        header.endian = endian
+        header.file_type_id = 0
+        header.file_type = "SRO"
+        header.file_number = 0
+        header.header_length = 0
+        header.record_count = 0
+        header.index_array_length = 0
+        header.bit_info = 0
+        header.version = 6
+        header.container_version = 4
+        header.user_header_length = 0
+        header.magic_number = MAGIC_NUMBER
+        header.user_register = 0
+        header.trailer_position = 0
+        header.user_integer1 = 0
+        header.user_integer2 = 0
         return header
 
     def get_hex_dump(self, buffer: mmap.mmap, offset: int = 0) -> str:
@@ -163,8 +205,9 @@ class FileHeader:
         endian_str = "Little Endian" if self.endian == '<' else "Big Endian"
 
         return f"""EVIO File Header:
+  Layout:            {self.layout}
   Magic Number:      0x{self.magic_number:08x}
-  Version:           {self.version}
+  Version:           {self.version} (container {self.container_version})
   Endianness:        {endian_str}
   File Type ID:      0x{self.file_type_id:08x} ({self.file_type or "Unknown"})
   File Number:       {self.file_number}

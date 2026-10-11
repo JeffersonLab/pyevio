@@ -58,6 +58,17 @@ class RecordHeader:
         self.has_first_event = False
         self.event_type = f"NeverInitialized"
 
+    # Word 5 of an SRO hardware block header: version 4 and nothing else. A
+    # v4 file written by the evio library sets bit-info bits somewhere in its
+    # chain (last-block 0x200, dictionary 0x100), which is how the two are
+    # told apart (EvioFile._detect_layout).
+    SRO_BLOCK_WORD = 0x00000004
+
+    @staticmethod
+    def is_sro_block_word(bit_info_version: int) -> bool:
+        """True when word 5 is exactly version 4 with no bit-info bits."""
+        return bit_info_version == RecordHeader.SRO_BLOCK_WORD
+
     @property
     def is_trailer(self) -> bool:
         """True for the trailer record that closes a file (header species 3).
@@ -124,7 +135,12 @@ class RecordHeader:
         if header.magic_number != RecordHeader.MAGIC_NUMBER:
             raise ValueError(f"Invalid record magic number: 0x{header.magic_number:08x}, expected 0x{RecordHeader.MAGIC_NUMBER:08x}")
 
-        if header.version != 6:
+        # Version 6 is the record header; the SRO hardware block header is
+        # the one other shape read: exactly 8 words, version 4, no bit-info
+        # bits (see RecordHeader.is_sro_block_word). Any other version is a
+        # legacy block that EvioFile refuses at open.
+        if header.version != 6 and not (header.header_length == 8
+                                        and RecordHeader.is_sro_block_word(bit_info_version)):
             raise ValueError(f"Unsupported EVIO version in record at offset 0x{offset:X}: "
                              f"version {header.version}, expected 6")
 
