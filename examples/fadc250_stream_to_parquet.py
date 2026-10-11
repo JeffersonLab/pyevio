@@ -43,16 +43,20 @@ def decode(path):
         for record_i in range(evio_file.record_count):
             record = evio_file.get_record(record_i)
             events = []
-            # A trailer record declares 0 events; its index holds record positions, not event lengths.
+            # Event offsets point into record.buffer (the decompressed bytes for LZ4/gzip
+            # records), never into the file mmap.
+            buffer = record.buffer
             for offset, length in record.get_event_offsets()[:record.header.event_count]:
-                if offset + length > evio_file.file_size:
+                if offset + length > len(buffer):
                     out_of_bounds += 1
                     continue
-                events.append(fs.event_words(evio_file.mm, offset, length, endian))
+                events.append(fs.event_words(buffer, offset, length, endian))
             chunks.append(fs.decode_frames(events, first_event_index=event_index))
             event_index += len(events)
         stream_hits = fs.concatenate_stream_hits(chunks)
-        del chunks
+        # Drop every view of the mmap before the `with` block closes it (EvioFile.close
+        # raises BufferError while a numpy view is alive).
+        del chunks, events, buffer
         record_count = evio_file.record_count
 
     order = np.lexsort((stream_hits.t_ns, stream_hits.event_index, stream_hits.frame))

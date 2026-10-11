@@ -82,7 +82,6 @@ class FrameScan:
 def scan_frames(evio_file: EvioFile, max_records: Optional[int] = None) -> FrameScan:
     """Read frame number and timestamp from the SIB of every event without decoding hits."""
     endian = evio_file.header.endian
-    mm = evio_file.mm
     rows = []
     n_records = n_trailers = n_events = n_other = n_out_of_bounds = 0
     events_before = []
@@ -94,15 +93,16 @@ def scan_frames(evio_file: EvioFile, max_records: Optional[int] = None) -> Frame
         if record_type(record) == RECORD_TYPE_TRAILER:
             n_trailers += 1
             continue
+        buffer = record.buffer  # event offsets are buffer offsets (decompressed bytes for LZ4/gzip records)
         for event_i, (offset, length) in enumerate(record.get_event_offsets()[:record.header.event_count]):
-            if offset + length > evio_file.file_size:
+            if offset + length > len(buffer):
                 n_out_of_bounds += 1
                 continue
             n_events += 1
             if length < 32:
                 n_other += 1
                 continue
-            words = struct.unpack_from(endian + "8I", mm, offset)
+            words = struct.unpack_from(endian + "8I", buffer, offset)
             if (words[1] >> 16) != fs.STREAM_EVENT_TAG or (words[3] >> 16) != fs.SIB_TAG or (words[4] >> 24) != fs.SIB_TSS_SEGMENT_TAG:
                 n_other += 1
                 continue
@@ -297,10 +297,13 @@ def _decode_records(evio_file: EvioFile, record_range, events_before_record: np.
             record = evio_file.get_record(record_i)
             if record_type(record) == RECORD_TYPE_TRAILER:
                 continue
+            # Event offsets point into record.buffer: the mmap for a plain record, the
+            # decompressed bytes for an LZ4/gzip record (F4). Never read them from the mmap.
+            buffer = record.buffer
             for offset, length in record.get_event_offsets()[:record.header.event_count]:
-                if offset + length <= evio_file.file_size:
-                    events.append(fs.event_words(evio_file.mm, offset, length, endian))
-            evio_file._records.pop(record_i, None)  # free the record cache; a worker visits each record once
+                if offset + length <= len(buffer):
+                    events.append(fs.event_words(buffer, offset, length, endian))
+            record.release()  # drop a decompressed buffer early; the views above keep it alive while needed
         accumulator.absorb(fs.decode_frames(events, first_event_index=first_event_index))
     return accumulator
 

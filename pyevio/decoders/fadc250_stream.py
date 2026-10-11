@@ -115,7 +115,9 @@ NON_FADC_BANK_DTYPE = np.dtype([
 def event_words(mm, offset: int, length: int, endian: str) -> np.ndarray:
     """Return the words of one event as a ``uint32`` view of ``mm`` in the file's byte order.
 
-    ``offset`` and ``length`` are in bytes, as ``Record.get_event_offsets`` returns them.
+    ``offset`` and ``length`` are in bytes, as ``Record.get_event_offsets`` returns them;
+    they index ``Record.buffer`` (the file mmap for a plain record, the decompressed bytes
+    for an LZ4 or gzip record), so pass that buffer, never the file mmap.
     Raises ``ValueError`` when the range runs past the buffer, so a caller never reads
     past the file because an index word said so.
     """

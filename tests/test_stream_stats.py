@@ -146,9 +146,10 @@ def test_corpus_first_200_records_match_decoder():
         chunks = []
         for record_i in range(200):
             record = evio_file.get_record(record_i)
-            events = [fs.event_words(evio_file.mm, o, l, endian) for o, l in record.get_event_offsets()[:record.header.event_count]]
+            events = [fs.event_words(record.buffer, o, l, endian) for o, l in record.get_event_offsets()[:record.header.event_count]]
             chunks.append(fs.decode_frames(events))
         decoded = fs.concatenate_stream_hits(chunks)
+        del events, chunks  # views of the mmap must be gone before EvioFile.close()
 
     assert stats.n_frames == decoded.n_stream_frames == 2200
     assert stats.n_hits == decoded.n_hits

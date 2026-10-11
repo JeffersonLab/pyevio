@@ -106,7 +106,7 @@ def display_child_banks(console, parent_bank, evio_file, verbose, hexdump, level
 
                     # Use print_offset_hex for displaying hex data
                     if hexdump:
-                        print_offset_hex(evio_file.mm, child.offset, min(16, child.length),
+                        print_offset_hex(child.mm, child.offset, min(16, child.length),
                                          f"Child #{i} at offset 0x{child.offset:X}[{child.offset//4}]")
 
                     # Show length details for better debugging
@@ -145,8 +145,8 @@ def display_data_bank(console, bank, evio_file, hexdump=False):
 
     # The length word counts the words that follow it, so the payload is (length - 1) words after the 2-word header.
     data_offset = bank.offset + 8
-    data_end = min(data_offset + 4 * (bank.length - 1), len(evio_file.mm))
-    data_words = fadc250_stream.event_words(evio_file.mm, data_offset, max(data_end - data_offset, 0), bank.endian)
+    data_end = min(data_offset + 4 * (bank.length - 1), len(bank.mm))
+    data_words = fadc250_stream.event_words(bank.mm, data_offset, max(data_end - data_offset, 0), bank.endian)
 
     if len(data_words) == 0:
         console.print(f"[bold]Data Bank (No Valid Data)[/bold]")
@@ -165,7 +165,7 @@ def display_data_bank(console, bank, evio_file, hexdump=False):
 
     # Show hexdump if requested
     if hexdump and bank.data_length > 0:
-        print_offset_hex(evio_file.mm, bank.data_offset, min(bank.data_length // 4, 16),
+        print_offset_hex(bank.mm, bank.data_offset, min(bank.data_length // 4, 16),
                          f"Data Bank at 0x{bank.offset:X}[{bank.offset//4}]")
 
 def display_roc_timeslice_info(console, bank, evio_file, payload_filter=None, hexdump=False):
@@ -243,7 +243,7 @@ def display_roc_timeslice_info(console, bank, evio_file, payload_filter=None, he
 
                     # Show hexdump of waveform data
                     if hexdump:
-                        print_offset_hex(evio_file.mm, payload_bank.data_offset, min(16, payload_bank.data_length//4),
+                        print_offset_hex(payload_bank.mm, payload_bank.data_offset, min(16, payload_bank.data_length//4),
                                          f"Payload {p_idx} Data at 0x{payload_bank.data_offset:X}[{payload_bank.data_offset//4}]")
             except Exception as e:
                 console.print(f"[red]Error analyzing waveform data: {str(e)}[/red]")
@@ -251,7 +251,7 @@ def display_roc_timeslice_info(console, bank, evio_file, payload_filter=None, he
 
 def display_stream_frame(console, evio_file, event_obj):
     """Decode a streaming time frame (0xFF60) and show its hits per ROC bank."""
-    words = fadc250_stream.event_words(evio_file.mm, event_obj.offset, event_obj.length, event_obj.endian)
+    words = fadc250_stream.event_words(event_obj.mm, event_obj.offset, event_obj.length, event_obj.endian)
     frame = fadc250_stream.decode_frame(words)
     console.print(f"[bold]Streaming time frame {frame.frame_number}[/bold], timestamp {frame.timestamp}, "
                   f"{frame.n_hits} hits in {frame.n_roc_banks} ROC banks, "
@@ -294,7 +294,7 @@ def display_event_info(console, evio_file, record_obj, event_idx, payload_filter
         # Show hexdump if requested
         if hexdump:
             console.print()
-            print_offset_hex(evio_file.mm, event_obj.offset, min(30, event_obj.length//4), f"Event #{event_idx} at 0x{event_obj.offset:X}[{event_obj.offset//4}]")
+            print_offset_hex(event_obj.mm, event_obj.offset, min(30, event_obj.length//4), f"Event #{event_idx} at 0x{event_obj.offset:X}[{event_obj.offset//4}]")
 
 
         # Get bank information
@@ -332,7 +332,7 @@ def display_event_info(console, evio_file, record_obj, event_idx, payload_filter
 
                 # Show hexdump of bank data if requested
                 if hexdump:
-                    print_offset_hex(evio_file.mm, bank.data_offset, min(16, bank.data_length//4),
+                    print_offset_hex(bank.mm, bank.data_offset, min(16, bank.data_length//4),
                                      f"Bank Data at 0x{bank.data_offset:X}[{bank.data_offset//4}]")
 
         except Exception as e:
