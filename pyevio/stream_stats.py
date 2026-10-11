@@ -107,6 +107,10 @@ def scan_frames(evio_file: EvioFile, max_records: Optional[int] = None) -> Frame
                 n_other += 1
                 continue
             rows.append((record_i, event_i, words[5], words[6] | (words[7] << 32)))
+    # EvioFile.record_count covers data records only (D12); the trailer is a separate
+    # attribute and counts as seen once the scan has covered the whole file.
+    if record_limit == evio_file.record_count and evio_file.trailer is not None:
+        n_trailers += 1
     return FrameScan(np.array(rows, dtype=FRAME_SCAN_DTYPE), n_records, n_trailers, n_events, n_other, n_out_of_bounds,
                      np.asarray(events_before, dtype=np.int64))
 

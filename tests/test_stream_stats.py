@@ -63,7 +63,8 @@ def test_synthetic_file_totals_and_checks(tmp_path, workers):
     path, expected_hits, frame_numbers = write_synthetic_file(tmp_path / "synthetic.evio")
     stats = stream_stats.compute_stream_stats(path, workers=workers, rate_bins=8, chunk_records=1)
 
-    assert stats.n_records == 4 and stats.n_trailer_records == 1
+    # n_records counts data records (EvioFile.record_count, D12); the trailer is reported apart.
+    assert stats.n_records == 3 and stats.n_trailer_records == 1
     assert stats.n_events == 13 and stats.n_frames == 12 and stats.n_other_events == 1
     assert stats.n_hits == expected_hits
     assert stats.non_fadc_words == 12 * len(DCRB_WORDS)
