@@ -1,13 +1,14 @@
 # Changelog
 
-All notable changes to pyevio are listed here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Finding numbers (F1—F54) refer to the project's defect ledger.
+All notable changes to pyevio are listed here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Finding numbers (F1—F62) refer to the project's defect ledger.
 
 ## [Unreleased]
 
 ### Added
 
 - File check "AIS entries identical": the decoder counts the aggregation info segment entries and distinct values per frame; `stream_stats` and the viewer Overview report frames whose AIS repeats one stream's entry in every slot (F15).
-- Decode warnings: a malformed SIB segment after the time slice segment (an AIS whose length runs past the SIB end, or with no entries) touches no hit, so the decoder counts it in `warnings` / `warning_messages` (per frame and in total) instead of `errors`; `StreamHits.validate()` passes, `stream_stats` carries the totals, the viewer shows a "decode warnings" check and the Parquet example prints the messages to stderr (F58, F59). Stats version 3: caches written by versions 1 and 2 are recomputed.
+- Decode warnings: a malformed SIB segment after the time slice segment (an AIS whose length runs past the SIB end, or with no entries) touches no hit, so the decoder counts it in `warnings` / `warning_messages` (per frame and in total) instead of `errors`; `StreamHits.validate()` passes, `stream_stats` carries the totals, the viewer shows a "decode warnings" check, `pyevio debug` prints the messages and the Parquet example prints them to stderr (F58, F59). Stats version 3: caches written by versions 1 and 2 are recomputed.
+- `pyevio stats` prints the decode warnings and the AIS check (frames with an aggregation info segment, frames whose segment repeats one entry), the same checks the viewer shows (F61).
 - Reading of JLab SRO hardware streams: files with no file header and 8-word block headers whose version word is 4 with no bit-info bits open natively as `EvioFile.header_layout == "sro-8word"`. The whole header chain is checked at open; an evio-library v4 file (a header with the last-record or dictionary bit, or a 14-word header) raises the version error instead. `FileHeader.layout`, `FileHeader.container_version`, `FileHeader.for_sro_stream()`, `RecordHeader.is_sro_block_word()`.
 - Reading of bare EVIO v6 record streams (an evio writer buffer dump, 14-word record headers with no file header) as `EvioFile.header_layout == "v6-records"`; `EvioFile.record_header_problem(offset)` names what is wrong with a record header; `pyevio info` prints the layout and the file checks.
 - Compressed records: LZ4, LZ4_BEST and gzip records are decompressed on first access. `Record.buffer` holds the index array, user header and events (the file mmap for an uncompressed record, the decompressed bytes otherwise); `Record.release()` drops the buffer; `Record.compression_type`.
@@ -34,6 +35,7 @@ All notable changes to pyevio are listed here. The format follows [Keep a Change
 - `examples/fadc250_stream_to_parquet.py`: a `stream` column, `port` widened to `uint16`, hits sorted by (frame, event index, t_ns) and frames by (frame, event index), `DECODER_VERSION` "2"; event bytes come from `record.buffer` and no `Event` objects are kept.
 - `RecordHeader.parse()` and `BufferReader` raise without printing hex dumps first.
 - Packaging: pytest, pyyaml and pyarrow sit in the default `dev` dependency group, so `uv run pytest` works without extras; setuptools package discovery is restricted to `pyevio*`.
+- `pyevio web` cache key: the file path, size and modification time without the stats version. An entry written by another version is recomputed and overwritten at the same name instead of staying behind as an orphan (F60).
 
 ### Removed
 

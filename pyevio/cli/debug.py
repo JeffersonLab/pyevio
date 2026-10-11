@@ -263,6 +263,8 @@ def display_stream_frame(console, evio_file, event_obj):
                   f"{frame.non_fadc_words} words of other modules")
     for message in frame.error_messages:
         console.print(f"[red]Decode error: {message}[/red]")
+    for message in frame.warning_messages:
+        console.print(f"[yellow]Decode warning: {message}[/yellow]")
 
     module_names = {fadc250_stream.MODULE_FADC250: "fADC250", fadc250_stream.MODULE_DCRB: "DCRB",
                     fadc250_stream.MODULE_UNKNOWN: "unmapped"}
