@@ -53,13 +53,11 @@ if not os.path.isfile(MANIFEST_PATH):
 with open(MANIFEST_PATH) as manifest_file:
     MANIFEST = yaml.safe_load(manifest_file)
 
-# Today every corpus file fails the same way: the trailer
-# record is counted as a data record, and its index yields two ghost events
-# per data record that reach past EOF (F3). The LZ4 files add F4: the data
-# records are walked as uncompressed bytes.
+# The LZ4 files fail today: the data records are walked as uncompressed
+# bytes (F4). The uncompressed files pass since F3 (trailer counted as a
+# record; its index read as events) was fixed in PHASE1.
 XFAIL_BY_COMPRESSION = {
-    "none": "F3: trailer counted as a record; trailer index read as events past EOF",
-    "lz4": "F4 (and F3): LZ4 records walked as uncompressed bytes; trailer ghosts",
+    "lz4": "F4: LZ4 records walked as uncompressed bytes",
 }
 
 

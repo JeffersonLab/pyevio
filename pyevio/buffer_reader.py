@@ -55,8 +55,7 @@ class BufferReader:
             raise ValueError(f"Buffer too small or invalid at offset {magic_pos}: {e}")
 
         # If we get here, neither endianness matched
-        print(self.hex_dump())
-        raise ValueError(f"Invalid magic number: 0x{magic:08X}, expected 0xc0da0100")
+        raise ValueError(f"Invalid magic number at offset 0x{magic_pos:X}: 0x{magic:08X}, expected 0xc0da0100")
 
     def read_uint32(self, offset_words: int = 0) -> int:
         """

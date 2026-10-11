@@ -4,7 +4,7 @@ import struct
 from typing import List, Tuple, Optional, Dict, Any, Iterator
 from datetime import datetime
 
-from pyevio.file_header import FileHeader
+from pyevio.file_header import FileHeader, detect_endian, file_type_name, unsupported_version_error
 from pyevio.record import Record
 from pyevio.record_header import RecordHeader
 from pyevio.event import Event
@@ -16,6 +16,16 @@ class EvioFile:
 
     Manages file resources and provides methods for navigating through
     the file structure using Records and Events.
+
+    Records: ``record_count``, ``get_record()`` and ``iter_records()`` cover
+    the data records. The trailer record that closes a file (header species
+    3) holds no events and is exposed separately as ``trailer`` (None when
+    the file ends in a plain record).
+
+    Layouts: ``header_layout`` names how the file starts. ``"v6"`` is a
+    14-word file header followed by 14-word record headers. Files without a
+    file header (EVIO v4 blocks, v1—3 blocks) raise ``ValueError`` naming
+    the version at open.
     """
 
     def __init__(self, filename: str, verbose: bool = False):
@@ -25,6 +35,9 @@ class EvioFile:
         Args:
             filename: Path to the EVIO file
             verbose: Enable verbose output
+
+        Raises:
+            ValueError: the file is not EVIO, or an EVIO version pyevio does not read
         """
         self.verbose = verbose
         self.filename = filename
@@ -34,8 +47,7 @@ class EvioFile:
         # Memory map the file for efficient access
         self.mm = mmap.mmap(self.file.fileno(), 0, access=mmap.ACCESS_READ)
 
-        # Parse file header
-        self.header = FileHeader.from_buffer(self.mm, 0)
+        self.header_layout, self.header = self._detect_layout()
 
         # Calculate initial offset after file header
         self.first_record_offset = self.header.header_length * 4
@@ -50,12 +62,36 @@ class EvioFile:
 
         # Record objects (will be created on demand)
         self._records = {}
+        self._trailer = None
 
         # Scan record offsets
+        self._trailer_offset: Optional[int] = None
         self._record_offsets = self._scan_record_offsets()
 
         # Total event count cache
         self._total_event_count = None
+
+    def _detect_layout(self) -> Tuple[str, FileHeader]:
+        """Decide how the file starts and parse its header.
+
+        Every EVIO header layout carries the magic word at word 7, so the byte
+        order comes from there. A file type id in word 0 means a v6 file
+        header. Anything else is a bare block or record header at offset 0:
+        its version sits in the low byte of word 5. Only version 6 with a
+        file header is read here; other versions raise the one unsupported-
+        version error.
+        """
+        endian = detect_endian(self.mm, 0)
+        if endian is None:
+            raise ValueError(f"Not an EVIO file: no magic number 0x{RecordHeader.MAGIC_NUMBER:08x} "
+                             f"at word 7 of {self.filename}")
+
+        first_word = struct.unpack(endian + 'I', self.mm[0:4])[0]
+        if file_type_name(first_word) is not None:
+            return "v6", FileHeader.from_buffer(self.mm, 0)
+
+        block_version = struct.unpack(endian + 'I', self.mm[20:24])[0] & 0xFF
+        raise unsupported_version_error(block_version, f"block header at offset 0, no file header: {self.filename}")
 
     def __del__(self):
         """Cleanup resources when object is destroyed"""
@@ -87,28 +123,37 @@ class EvioFile:
         offset = self.first_record_offset
 
         while offset < self.file_size:
-            try:
-                # Store this record's position
-                record_offsets.append(offset)
+            record = Record(self.mm, offset, self.header.endian)
 
-                # Create a temporary Record object to get its size
-                record = Record(self.mm, offset, self.header.endian)
+            # The trailer closes the file: it lists records, holds no events
+            # and is exposed as `trailer`, never as a data record.
+            if record.header.is_trailer:
+                self._trailer_offset = offset
+                break
 
-                # Move to next record
-                offset += record.size
+            if record.size < record.header_size:
+                raise ValueError(f"Record at offset 0x{offset:X} declares {record.header.record_length} words, "
+                                 f"less than its {record.header.header_length}-word header")
 
-                # Stop if this was the last record. Some CODA writers set the
-                # last-record bit on every record, so keep going if another
-                # record header follows.
-                if record.header.is_last_record and not self._is_record_at(offset):
-                    break
+            record_offsets.append(offset)
+            offset += record.size
 
-            except Exception as e:
-                if self.verbose:
-                    print(f"Error scanning record at offset 0x{offset:X}: {e}")
-                raise
+            # Stop if this was the last record. Some CODA writers set the
+            # last-record bit on every record, so keep going if another
+            # record header follows.
+            if record.header.is_last_record and not self._is_record_at(offset):
+                break
 
         return record_offsets
+
+    @property
+    def trailer(self) -> Optional[Record]:
+        """The trailer record that closes the file, or None when the file ends in a plain record."""
+        if self._trailer_offset is None:
+            return None
+        if self._trailer is None:
+            self._trailer = Record(self.mm, self._trailer_offset, self.header.endian)
+        return self._trailer
 
     def _is_record_at(self, offset: int) -> bool:
         """Check whether a record header (magic word in word 7) starts at offset."""
@@ -223,7 +268,7 @@ class EvioFile:
 
         Returns: found events
         """
-        _, _, event, _ = self.get_record_and_event(global_index)
+        _, event = self.get_record_and_event(global_index)
         return event
 
     def iter_events(self) -> Iterator[Tuple[Record, Event]]:

@@ -79,36 +79,14 @@ LEGACY_VERSION = {
 }
 
 # Today's failures by case name, decided by running every row with pyevio.
-# F3: a trailer with an index yields `index_array_length // 4` ghost events
-#     (two per data record) that reach past EOF.
-# F4: compressed records are walked as uncompressed bytes: every event of the
-#     data record is garbage, plus the F3 ghosts.
-# F9: legacy files fail with "Invalid EVIO file: file_type_id = ..." instead
-#     of a message naming the version.
-# F39: the HIPO file type id 0x4849504F is rejected although the
-#     file is EVIO v6.
-TRAILER_GHOSTS = "F3: trailer index read as event index; ghost events past EOF"
+# F4: compressed records are walked as uncompressed bytes: the event walk
+#     stops at the first garbage length, so fewer events are found.
+# Fixed in PHASE1 and no longer listed: F3 (trailer index read as events),
+# F9 (version message for legacy files), F39 (HIPO file type id).
 XFAIL_BY_CASE = {
-    "append_le.evio": TRAILER_GHOSTS,
-    "basic_be.evio": TRAILER_GHOSTS,
-    "basic_le.evio": TRAILER_GHOSTS,
-    "deepnest_le.evio": TRAILER_GHOSTS,
-    "dict_le.evio": TRAILER_GHOSTS,
-    "dictfirst_le.evio": TRAILER_GHOSTS,
-    "first_le.evio": TRAILER_GHOSTS,
-    "hugeev_le.evio": TRAILER_GHOSTS,
-    "manyrec_le.evio": TRAILER_GHOSTS,
-    "writer_traileridx_le.evio": TRAILER_GHOSTS,
-    "split_le_1.evio.0": TRAILER_GHOSTS,
-    "split_le_1.evio.1": TRAILER_GHOSTS,
-    "lz4_le.evio": "F4 (and F3): LZ4 record walked as uncompressed bytes",
-    "lz4best_le.evio": "F4 (and F3): LZ4_BEST record walked as uncompressed bytes",
-    "gzip_le.evio": "F4 (and F3): gzip record walked as uncompressed bytes",
-    "v4_le.evio": "F9: generic file_type_id error instead of a version message",
-    "v4_be.evio": "F9: generic file_type_id error instead of a version message",
-    "v4dict_le.evio": "F9: generic file_type_id error instead of a version message",
-    "v13_legacy.evio": "F9: generic file_type_id error instead of a version message",
-    "hipo_le.evio": "F39: HIPO file type id 0x4849504F rejected; then F3 (trailer with index)",
+    "lz4_le.evio": "F4: LZ4 record walked as uncompressed bytes",
+    "lz4best_le.evio": "F4: LZ4_BEST record walked as uncompressed bytes",
+    "gzip_le.evio": "F4: gzip record walked as uncompressed bytes",
 }
 
 

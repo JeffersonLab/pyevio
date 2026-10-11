@@ -44,14 +44,21 @@ class Record:
 
         # Cache for events (will be populated on demand)
         self._events = None
-        self._event_count = None
+        self._event_info = None
+
+        # Why an event walk stopped early (short strings with offsets); empty
+        # when every event length fit inside the record.
+        self.errors: List[str] = []
 
     @property
     def event_count(self) -> int:
-        """Get the number of events in this record."""
-        if self._event_count is None:
-            self._event_count = self.header.event_count
-        return self._event_count
+        """Number of events the header declares. A trailer declares 0."""
+        return self.header.event_count
+
+    @property
+    def is_trailer(self) -> bool:
+        """True for the trailer record that closes a file; it holds no events."""
+        return self.header.is_trailer
 
     def scan_events(self) -> List[Tuple[int, int]]:
         """
@@ -60,29 +67,51 @@ class Record:
         Returns:
             List of tuples (offset, length) for all events in the record
         """
+        if self._event_info is None:
+            self._event_info = self._scan_events()
+        return self._event_info
+
+    def _scan_events(self) -> List[Tuple[int, int]]:
+        # A trailer's index array lists records, never events: reading it as
+        # event lengths yields ghost events past the end of the file.
+        if self.header.is_trailer:
+            return []
+
         event_info = []
+        current_offset = self.data_start
 
         if self.header.index_array_length > 0:
-            # Parse events from index array
-            event_count = self.header.index_array_length // 4
-            current_offset = self.data_start
+            # The index array holds one byte length per event. The header's
+            # event count and the index size are two claims about the same
+            # number; trust neither beyond the other.
+            index_entries = self.header.index_array_length // 4
+            event_count = min(self.header.event_count, index_entries)
 
-            for i in range(event_count):
-                length_offset = self.index_array_start + (i * 4)
-                event_length = struct.unpack(self.endian + 'I', self.mm[length_offset:length_offset+4])[0]
-
-                # Store event offset and length
+            for event_i in range(event_count):
+                length_offset = self.index_array_start + event_i * 4
+                event_length = struct.unpack(self.endian + 'I', self.mm[length_offset:length_offset + 4])[0]
+                if event_length < 8 or current_offset + event_length > self.data_end:
+                    self.errors.append(f"event {event_i} at 0x{current_offset:X} declares {event_length} bytes, "
+                                       f"record data ends at 0x{self.data_end:X}")
+                    break
                 event_info.append((current_offset, event_length))
-
-                # Update cumulative offset for next event
                 current_offset += event_length
 
-        elif self.header.event_count > 0:
-            # No index array: walk events by the length word of each event bank
-            current_offset = self.data_start
-            while current_offset + 8 <= self.data_end and len(event_info) < self.header.event_count:
-                bank_length = struct.unpack(self.endian + 'I', self.mm[current_offset:current_offset+4])[0]
+        else:
+            # No index array: walk events by the length word of each event
+            # bank (length + 1 words, see Bank). Stop at the header's event
+            # count or at the end of the record data, whichever comes first.
+            while len(event_info) < self.header.event_count:
+                if current_offset + 8 > self.data_end:
+                    self.errors.append(f"event {len(event_info)} at 0x{current_offset:X} has no room for a bank header, "
+                                       f"record data ends at 0x{self.data_end:X}")
+                    break
+                bank_length = struct.unpack(self.endian + 'I', self.mm[current_offset:current_offset + 4])[0]
                 event_length = (bank_length + 1) * 4
+                if bank_length == 0 or current_offset + event_length > self.data_end:
+                    self.errors.append(f"event {len(event_info)} at 0x{current_offset:X} declares {event_length} bytes, "
+                                       f"record data ends at 0x{self.data_end:X}")
+                    break
                 event_info.append((current_offset, event_length))
                 current_offset += event_length
 
@@ -333,7 +362,8 @@ class Record:
 
     def __str__(self) -> str:
         """Return a string representation of this record."""
-        return f"Record at offset 0x{self.offset:X} with {self.event_count} events"
+        kind = "Trailer" if self.is_trailer else "Record"
+        return f"{kind} at offset 0x{self.offset:X} with {self.event_count} events"
 
     def __repr__(self) -> str:
         """Return a string representation for debugging."""
