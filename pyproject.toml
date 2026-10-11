@@ -27,6 +27,11 @@ build-backend = "setuptools.build_meta"
 [tool.setuptools.dynamic]
 version = {attr = "pyevio.__version__"}
 
+# Only the library is a package; docs/, examples/, space/ and tests/ sit
+# beside it in a flat layout and must not be discovered as packages.
+[tool.setuptools.packages.find]
+include = ["pyevio*"]
+
 [project.scripts]
 pyevio = "pyevio.cli:main"
 
