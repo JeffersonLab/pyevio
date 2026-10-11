@@ -38,8 +38,12 @@ def info_command(ctx, filename, verbose, hexdump, full):
             console.print()
 
         # Add header fields to the table
+        table.add_row("Layout", header.layout)
         table.add_row("Magic Number", f"EVIO (0x{header.magic_number:08X})")
-        table.add_row("Format Version", str(header.version))
+        version = str(header.version)
+        if header.container_version != header.version:
+            version += f" (content; block headers say {header.container_version})"
+        table.add_row("Format Version", version)
         table.add_row("Endianness", "Little" if header.endian == '<' else "Big")
         table.add_row("Record Count", str(evio_file.record_count))
         table.add_row("Index Array Size", f"{header.index_array_length // 8} entries")
@@ -98,3 +102,22 @@ def info_command(ctx, filename, verbose, hexdump, full):
         total_events = evio_file.get_total_event_count()
         console.print(f"Total Events: {total_events}")
         console.print(f"File Size: {evio_file.file_size / (1024*1024):.2f} MB")
+
+        console.print("\n[bold]File Checks:[/bold]")
+        if not evio_file.checks:
+            console.print("none")
+        for check in evio_file.checks:
+            console.print(describe_check(check))
+
+
+def describe_check(check: tuple) -> str:
+    """One line for an EvioFile.checks entry (see EvioFile for the tuple shapes)."""
+    name = check[0]
+    if name == "truncated_tail":
+        _, declared, present, salvaged = check
+        return (f"truncated_tail: the last record is cut by the end of the file — "
+                f"declared {declared} bytes, {present} present, {salvaged} complete events kept")
+    if name == "bad_record_header":
+        _, offset, reason = check
+        return f"bad_record_header: record scan stopped at offset 0x{offset:X} — {reason}"
+    return f"{name}: {check[1:]}"

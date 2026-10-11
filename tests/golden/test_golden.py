@@ -30,7 +30,9 @@ What one test checks
 --------------------
 1. The file is present and its sha256 matches the manifest (a mismatch is a
    broken reference: stop and ask, never regenerate over it).
-2. ``.dump`` rows are record streams without a file header: skipped.
+2. ``.dump`` rows are record streams without a file header: read as layout
+   ``"v6-records"`` and checked like the v6 rows (the dictionary in the
+   record user header of ``buffer_evw_dict_le.dump`` is skipped, not read).
 3. v4 and v1—3 rows: ``EvioFile`` raises ``ValueError`` whose message names
    the detected version and points at the evio tools (the I9 contract, see
    ``assert_unsupported_version_message``).
@@ -90,9 +92,7 @@ def manifest_params():
     for row in MANIFEST["files"]:
         test_id = row["path"].split("cases/", 1)[-1]
         marks = []
-        if row["path"].endswith(".dump"):
-            marks.append(pytest.mark.skip(reason="buffer dump, no file header"))
-        elif row["case"] in XFAIL_BY_CASE:
+        if row["case"] in XFAIL_BY_CASE:
             marks.append(pytest.mark.xfail(strict=True, reason=XFAIL_BY_CASE[row["case"]]))
         params.append(pytest.param(row, id=test_id, marks=marks))
     return params
@@ -135,6 +135,8 @@ def test_golden_file(row):
 
     file_size = os.path.getsize(path)
     with EvioFile(path) as evio_file:
+        expected_layout = "v6-records" if path.endswith(".dump") else "v6"
+        assert evio_file.header_layout == expected_layout
         header_events = evio_file.get_total_event_count()
         scanned_events = 0
         past_end = []

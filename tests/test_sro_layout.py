@@ -131,14 +131,42 @@ def test_byte_swapped_block_is_named_in_the_check(tmp_path):
         assert "byte-swapped record header" in f.checks[0][2]
 
 
-def test_v6_record_stream_without_file_header_is_refused(tmp_path):
-    """A buffer dump (14-word v6 record headers, no file header) is not an SRO block chain."""
+def test_v6_record_stream_without_file_header(tmp_path):
+    """A buffer dump (14-word v6 record headers, no file header) reads as layout "v6-records"."""
     event = struct.pack("<4I", 3, 0xFF601000, 1, 2)
     record = struct.pack("<14I", 14 + 1 + 4, 1, 14, 1, 4, 6, 0, MAGIC, 16, 0, 0, 0, 0, 0) + struct.pack("<I", 16) + event
     path = tmp_path / "buffer.dump"
-    path.write_bytes(record)
-    with pytest.raises(ValueError, match="record stream without a file header"):
-        EvioFile(str(path))
+    path.write_bytes(record + record)
+    with EvioFile(str(path)) as f:
+        assert f.header_layout == "v6-records"
+        assert (f.header.layout, f.header.version, f.header.container_version, f.header.file_type) == (
+            "v6-records", 6, 6, "EVIO records")
+        assert f.first_record_offset == 0
+        assert f.record_count == 2 and f.header.record_count == 2
+        assert f.trailer is None and f.checks == []
+        assert [[e.length for e in f.get_record(i).get_events()] for i in range(2)] == [[16], [16]]
+
+
+def test_info_command_prints_layout_checks_and_counts(tmp_path):
+    """`pyevio info` on an SRO file shows the layout, the truncated-tail check and the record count."""
+    from click.testing import CliRunner
+    from pyevio.cli.info import info_command
+
+    blocks = [sro_block(1, EVENTS_A), sro_block(2, EVENTS_B), sro_block(3, EVENTS_C)]
+    cut = len(EVENTS_C[2]) * 4 - 8
+    path = write_sro_file(tmp_path / "sro_tail.evio", blocks, drop_tail_bytes=cut)
+    result = CliRunner().invoke(info_command, [path], obj={})
+    assert result.exit_code == 0, result.output
+    out = " ".join(result.output.split())  # rich wraps long lines at the terminal width
+    assert "sro-8word" in out
+    assert "Total Records: 3" in out
+    assert "Total Events: 7" in out
+    assert "truncated_tail" in out
+    assert f"declared {len(blocks[2])} bytes, {len(blocks[2]) - cut} present, 2 complete events kept" in out
+
+    with EvioFile(path) as f:
+        assert f.record_header_problem(0) is None
+        assert f.record_header_problem(4) is not None
 
 
 def test_garbage_between_blocks_ends_the_scan(tmp_path):

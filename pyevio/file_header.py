@@ -60,14 +60,19 @@ class FileHeader:
 
     - ``"v6"`` — the 14-word file header read from the file, followed by
       14-word record headers.
+    - ``"v6-records"`` — a bare stream of 14-word v6 records with no file
+      header, as the evio writers produce into a buffer (``.dump`` files).
     - ``"sro-8word"`` — the JLab SRO hardware stream: no file header at all,
       8-word block headers ``{length, block number, 8, event count, 0, 4,
       0, magic}`` whose version word says 4 with no bit-info bits. The
       events are EVIO v6 streaming content (tag 0xFF60 frames), so
       ``version`` reports 6 and ``container_version`` keeps the 4 the block
-      headers carry. Every field that only a file header could supply
-      (file number, user register, trailer position) is 0;
-      ``record_count`` is filled from the record scan.
+      headers carry.
+
+    For the two layouts without a file header the header is a stand-in:
+    every field only a file header could supply (file number, user
+    register, trailer position) is 0 and ``record_count`` is filled from
+    the record scan.
     """
 
     # EVIO magic number and bytes
@@ -78,6 +83,7 @@ class FileHeader:
     HEADER_SIZE = 56  # 14 words * 4 bytes
 
     LAYOUT_V6 = "v6"
+    LAYOUT_V6_RECORDS = "v6-records"
     LAYOUT_SRO = "sro-8word"
 
     def __init__(self):
@@ -166,18 +172,27 @@ class FileHeader:
     @staticmethod
     def for_sro_stream(endian: str) -> 'FileHeader':
         """The stand-in header of an SRO hardware stream (layout ``"sro-8word"``, see the class docstring)."""
+        return FileHeader._stand_in(FileHeader.LAYOUT_SRO, endian, container_version=4, file_type="SRO")
+
+    @staticmethod
+    def for_record_stream(endian: str) -> 'FileHeader':
+        """The stand-in header of a bare v6 record stream (layout ``"v6-records"``, see the class docstring)."""
+        return FileHeader._stand_in(FileHeader.LAYOUT_V6_RECORDS, endian, container_version=6, file_type="EVIO records")
+
+    @staticmethod
+    def _stand_in(layout: str, endian: str, container_version: int, file_type: str) -> 'FileHeader':
         header = FileHeader()
-        header.layout = FileHeader.LAYOUT_SRO
+        header.layout = layout
         header.endian = endian
         header.file_type_id = 0
-        header.file_type = "SRO"
+        header.file_type = file_type
         header.file_number = 0
         header.header_length = 0
         header.record_count = 0
         header.index_array_length = 0
         header.bit_info = 0
         header.version = 6
-        header.container_version = 4
+        header.container_version = container_version
         header.user_header_length = 0
         header.magic_number = MAGIC_NUMBER
         header.user_register = 0
