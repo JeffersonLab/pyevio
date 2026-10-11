@@ -1,8 +1,6 @@
 import mmap
 import struct
 
-import pytest
-
 from pyevio.bank import Bank
 
 
@@ -29,45 +27,12 @@ class MockMemoryMap:
         return len(self.data)
 
 
-def create_mock_bank(length, tag, data_type, num, data=None, endian='<'):
-    """
-    Create a mock bank with the specified parameters.
-
-    Args:
-        length: Bank length in words (including header)
-        tag: Bank tag
-        data_type: Bank data type
-        num: Bank number
-        data: Optional data (bytes) to include in the bank
-        endian: Endianness ('<' for little endian, '>' for big endian)
-
-    Returns:
-        Bytes object representing the bank
-    """
-    # Create bank header (2 words)
-    header_word1 = struct.pack(f"{endian}I", length)
-    header_word2 = struct.pack(f"{endian}I",
-                               ((tag & 0xFFFF) << 16) |
-                               ((data_type & 0xFF) << 8) |
-                               (num & 0xFF))
-
-    # If data is None, create empty data of appropriate length
-    if data is None:
-        # Length includes header, so subtract 2 words for data
-        data_size = max(0, (length - 2) * 4)
-        data = bytes(data_size)
-
-    # Combine header and data
-    return header_word1 + header_word2 + data
-
-
 def evio_bank(tag, data_type, num, payload, endian='<'):
     """Build a bank the EVIO way: the length word counts the words that follow it.
 
-    `create_mock_bank` above takes a length that includes the length word
-    itself, which is the convention `Bank` uses today (see
-    test_bank_length_counts_words_that_follow). Use this builder for data
-    that must match what the evio writers produce.
+    A bank with N payload words gets length N + 1 (the second header word
+    plus the payload) and occupies N + 2 words. This is what the evio
+    writers produce and what `Bank` reads.
     """
     assert len(payload) % 4 == 0, "payload is whole 32-bit words"
     length = len(payload) // 4 + 1
@@ -93,107 +58,75 @@ class TestBankScanning:
 
     def test_basic_bank_structure(self):
         """Test parsing of a simple container bank with child banks."""
-        # Create a container bank with two child banks
-        child1 = create_mock_bank(4, 0x0101, 0x01, 0x01, struct.pack("<II", 1, 2))
-        child2 = create_mock_bank(4, 0x0202, 0x02, 0x02, struct.pack("<II", 3, 4))
+        child1 = evio_bank(0x0101, 0x01, 0x01, struct.pack("<II", 1, 2))
+        child2 = evio_bank(0x0202, 0x02, 0x02, struct.pack("<II", 3, 4))
+        container = evio_bank(0xFFAA, 0x10, 0x00, child1 + child2)
 
-        # Container bank length = 2 (header) + len(child1)/4 + len(child2)/4
-        container_length = 2 + len(child1)//4 + len(child2)//4
-        container_data = child1 + child2
-        container = create_mock_bank(container_length, 0xFFAA, 0x10, 0x00, container_data)
+        bank = Bank(MockMemoryMap(container), 0, '<')
 
-        # Create mock memory map
-        mm = MockMemoryMap(container)
-
-        # Create bank object
-        bank = Bank(mm, 0, '<')
-
-        # Verify bank properties
         assert bank.tag == 0xFFAA
         assert bank.data_type == 0x10
         assert bank.num == 0x00
-        assert bank.length == container_length
+        assert bank.length == 9  # 1 header word + two 4-word children
+        assert bank.size == len(container)
 
-        # Get children
         children = bank.get_children()
-
-        # Verify children count
         assert len(children) == 2
+        assert bank.errors == []
 
-        # Verify first child
         assert children[0].tag == 0x0101
         assert children[0].data_type == 0x01
         assert children[0].num == 0x01
-        assert children[0].length == 4
+        assert children[0].length == 3
+        assert children[0].to_numpy().tolist() == [1, 2]
 
-        # Verify second child
         assert children[1].tag == 0x0202
         assert children[1].data_type == 0x02
         assert children[1].num == 0x02
-        assert children[1].length == 4
+        assert children[1].length == 3
+        assert children[1].offset == 8 + 16
 
     def test_minimal_length_banks(self):
-        """Test parsing of banks with minimal lengths (1 and 2)."""
-        # Create a length-1 bank (just the length word)
-        bank1 = struct.pack("<I", 1)
+        """A header-only bank (length 1, two words) is a valid empty leaf.
 
-        # Create a length-2 bank (length word + header word)
-        bank2 = create_mock_bank(2, 0x000F, 0x00, 0x01)
+        SRO payload banks with no hits look like this: length 1, num 1.
+        """
+        empty_bank = evio_bank(0x000F, 0x00, 0x01, b"")
+        data_bank = evio_bank(0x0010, 0x01, 0x00, struct.pack("<I", 7))
+        container = evio_bank(0xFF60, 0x10, 0x01, empty_bank + data_bank)
 
-        # Create a container with these banks
-        container_data = bank1 + bank2
-        container_length = 2 + len(container_data)//4
-        container = create_mock_bank(container_length, 0xFF60, 0x10, 0x01, container_data)
-
-        # Create mock memory map
-        mm = MockMemoryMap(container)
-
-        # Create bank object
-        bank = Bank(mm, 0, '<')
-
-        # Get children
+        bank = Bank(MockMemoryMap(container), 0, '<')
         children = bank.get_children()
 
-        # Verify children count
         assert len(children) == 2
+        assert bank.errors == []
 
-        # Verify first child (length-1 bank)
         assert children[0].length == 1
         assert children[0].offset == 8  # After container header
+        assert children[0].size == 8
+        assert children[0].data_length == 0
+        assert children[0].tag == 0x000F
+        assert children[0].num == 0x01
+        assert children[0].to_numpy().tolist() == []
 
-        # Verify second child (length-2 bank)
+        assert children[1].offset == 16
         assert children[1].length == 2
-        assert children[1].tag == 0x000F
-        assert children[1].data_type == 0x00
-        assert children[1].num == 0x01
+        assert children[1].to_numpy().tolist() == [7]
 
     def test_nonstandard_tag_patterns(self):
         """Test parsing of banks with non-standard tag patterns."""
-        # Create a ROC bank with 0x0002 for ROC_ID and 0x11 for status
-        roc_bank = create_mock_bank(3, 0x0002, 0x10, 0x11, struct.pack("<I", 0))
+        # A ROC bank with 0x0002 for ROC_ID and 0x11 for status
+        roc_bank = evio_bank(0x0002, 0x10, 0x11, struct.pack("<I", 0))
+        container = evio_bank(0xFF60, 0x10, 0x01, roc_bank)
 
-        # Create a container with this bank
-        container_data = roc_bank
-        container_length = 2 + len(container_data)//4
-        container = create_mock_bank(container_length, 0xFF60, 0x10, 0x01, container_data)
-
-        # Create mock memory map
-        mm = MockMemoryMap(container)
-
-        # Create bank object
-        bank = Bank(mm, 0, '<')
-
-        # Get children
+        bank = Bank(MockMemoryMap(container), 0, '<')
         children = bank.get_children()
 
-        # Verify children count
         assert len(children) == 1
-
-        # Verify ROC bank
         assert children[0].tag == 0x0002
         assert children[0].data_type == 0x10
         assert children[0].num == 0x11
-        assert children[0].length == 3
+        assert children[0].length == 2
 
     def test_complex_event_structure(self):
         """A ROC time-slice event: segment, bank of banks, leaf bank, all EVIO-consistent.
@@ -227,80 +160,59 @@ class TestBankScanning:
             (0x20, 0x0002, 0x10, 9),
             (0x48, 0x000F, 0x00, 2),
         ]
+        assert bank.errors == []
 
-        # The stream-info segment is a child of the ROC bank; the padding words are no banks.
+        # The stream-info segment is a child of the ROC bank; the zero padding
+        # words are no bank (length 0), so the walk stops there and says so.
         roc_children = children[1].get_children()
         assert [(c.offset, c.tag, c.data_type, c.length) for c in roc_children] == [
             (0x28, 0xFF30, 0x20, 4),
         ]
+        assert len(children[1].errors) == 1 and "0x3C" in children[1].errors[0]
         assert children[2].get_children() == []
 
-    def test_edge_cases(self):
-        """Test handling of edge cases (zero-length banks, boundary conditions)."""
-        # Create valid banks
-        valid_bank1 = create_mock_bank(3, 0x0101, 0x01, 0x01, struct.pack("<I", 1))
-        valid_bank2 = create_mock_bank(3, 0x0202, 0x02, 0x02, struct.pack("<I", 2))
+    def test_child_walk_stops_at_zero_length(self):
+        """A length-0 word between two banks is corrupt: the walk keeps the banks before it and stops."""
+        valid_bank1 = evio_bank(0x0101, 0x01, 0x01, struct.pack("<I", 1))
+        invalid_data = struct.pack("<II", 0, 0)
+        valid_bank2 = evio_bank(0x0202, 0x02, 0x02, struct.pack("<I", 2))
+        container = evio_bank(0xFF60, 0x10, 0x01, valid_bank1 + invalid_data + valid_bank2)
 
-        # Create invalid data (not a proper bank)
-        invalid_data = struct.pack("<II", 0, 0)  # Zero length, invalid
-
-        # Create container with valid and invalid data
-        container_data = valid_bank1 + invalid_data + valid_bank2
-        container_length = 2 + len(container_data)//4
-        container = create_mock_bank(container_length, 0xFF60, 0x10, 0x01, container_data)
-
-        # Create mock memory map
-        mm = MockMemoryMap(container)
-
-        # Create bank object
-        bank = Bank(mm, 0, '<')
-
-        # Get children - should skip invalid data
+        bank = Bank(MockMemoryMap(container), 0, '<')
         children = bank.get_children()
 
-        # Verify children count - should only get the valid banks
-        assert len(children) == 2
+        assert [(c.offset, c.tag) for c in children] == [(8, 0x0101)]
+        assert len(bank.errors) == 1
+        assert "0x14" in bank.errors[0] and "declares 0 words" in bank.errors[0]
 
-        # Verify first valid bank
-        assert children[0].tag == 0x0101
-        assert children[0].data_type == 0x01
+    def test_child_walk_stops_at_overrun(self):
+        """A child length that runs past the parent is corrupt: the walk stops before it."""
+        valid_bank = evio_bank(0x0101, 0x01, 0x01, struct.pack("<I", 1))
+        invalid_bank = struct.pack("<II", 1000, 0x02020202)
+        valid_bank2 = evio_bank(0x0303, 0x03, 0x03, struct.pack("<I", 3))
+        container = evio_bank(0xFF60, 0x10, 0x01, valid_bank + invalid_bank + valid_bank2)
 
-        # Verify second valid bank
-        assert children[1].tag == 0x0202
-        assert children[1].data_type == 0x02
-
-    def test_error_recovery(self):
-        """Test recovery from corrupted or invalid bank data."""
-        # Create valid bank
-        valid_bank = create_mock_bank(3, 0x0101, 0x01, 0x01, struct.pack("<I", 1))
-
-        # Create bank with invalid length (would go beyond parent)
-        invalid_bank = struct.pack("<I", 1000) + struct.pack("<I", 0x02020202)
-
-        # Create another valid bank after the invalid one
-        valid_bank2 = create_mock_bank(3, 0x0303, 0x03, 0x03, struct.pack("<I", 3))
-
-        # Create container with mix of valid and invalid
-        container_data = valid_bank + invalid_bank + valid_bank2
-        container_length = 2 + len(container_data)//4
-        container = create_mock_bank(container_length, 0xFF60, 0x10, 0x01, container_data)
-
-        # Create mock memory map
-        mm = MockMemoryMap(container)
-
-        # Create bank object
-        bank = Bank(mm, 0, '<')
-
-        # Get children - should skip invalid bank and recover
+        bank = Bank(MockMemoryMap(container), 0, '<')
         children = bank.get_children()
 
-        # Verify we found at least the first valid bank
-        assert len(children) >= 1
-        assert children[0].tag == 0x0101
-        assert children[0].data_type == 0x01
+        assert [(c.offset, c.tag) for c in children] == [(8, 0x0101)]
+        assert len(bank.errors) == 1
+        assert "declares 1000 words" in bank.errors[0]
 
+        # Repeated calls return the cached children and keep one error entry.
+        assert bank.get_children() == children
+        assert len(bank.errors) == 1
 
+    def test_child_walk_stops_at_short_header(self):
+        """One trailing word cannot hold a bank header: the walk stops and reports it."""
+        valid_bank = evio_bank(0x0101, 0x01, 0x01, struct.pack("<I", 1))
+        container = evio_bank(0xFF60, 0x10, 0x01, valid_bank + struct.pack("<I", 5))
 
+        bank = Bank(MockMemoryMap(container), 0, '<')
+        children = bank.get_children()
+
+        assert [(c.offset, c.tag) for c in children] == [(8, 0x0101)]
+        assert len(bank.errors) == 1 and "needs 8 bytes" in bank.errors[0]
 
     # The 22-word stream of a ROC time-slice event as dumped from a DAQ file.
     # Length words count the words that follow, so the containment is:
@@ -333,22 +245,23 @@ class TestBankScanning:
         with open(path, 'rb') as f, mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ) as mm:
             event_bank = Bank(mm, 0, '<')
             assert (event_bank.length, event_bank.tag, event_bank.data_type) == (21, 0xFF60, 0x10)
+            assert event_bank.size == 88 and event_bank.end_offset == 88
 
             children = event_bank.get_children()
             assert [(c.offset, c.tag, c.data_type, c.num, c.length) for c in children] == [
                 (0x08, 0xFF31, 0x20, 0x01, 7),
                 (0x28, 0x0002, 0x10, 0x11, 11),
             ]
+            assert event_bank.errors == []
 
-            # Inside the ROC bank: the 0xFF30 segment, then the truncated header, which is no bank.
+            # Inside the ROC bank: the 0xFF30 segment, then a zero word, which is no bank.
             roc_children = children[1].get_children()
             assert [(c.offset, c.tag, c.data_type, c.length) for c in roc_children] == [
                 (0x30, 0xFF30, 0x20, 7),
             ]
+            assert len(children[1].errors) == 1 and "0x50" in children[1].errors[0]
             assert all(c.tag != 0x000F for c in children + roc_children)
 
-    @pytest.mark.xfail(strict=True, reason="F38: Bank counts the length word as part of its own "
-                                           "length; size, end_offset and data_length are one word short")
     def test_bank_length_counts_words_that_follow(self):
         """A leaf bank with three uint32 payload words occupies five words and yields all three."""
         bank_bytes = evio_bank(0x0101, Bank.TYPE_UINT32, 0x01, struct.pack("<III", 1, 2, 3))
@@ -360,6 +273,7 @@ class TestBankScanning:
         assert bank.end_offset == 20
         assert bank.data_length == 12
         assert bank.to_numpy().tolist() == [1, 2, 3]
+        assert bank.get_data() == struct.pack("<III", 1, 2, 3)
 
     def test_data_payload_decoding(self):
         """Test decoding of FADC hit data in payload banks."""
@@ -372,37 +286,22 @@ class TestBankScanning:
         # Encode according to the bit pattern
         encoded_hit = (channel << 13) | (charge & 0x1FFF) | ((time // 4) << 17)
 
-        # CRITICAL FIX: Use create_mock_bank to create a proper bank structure
-        data_bank = create_mock_bank(2, 0x000F, 0x00, 0x01, struct.pack("<I", encoded_hit))
-
-        # Debug output
-        print("\nDEBUG: Data Bank Structure")
+        data_bank = evio_bank(0x000F, 0x00, 0x01, struct.pack("<I", encoded_hit))
         print_hex_dump(data_bank, "Data bank raw bytes")
 
-        # Create mock memory map
         mm = MockMemoryMap(data_bank)
-
-        # Create bank object
         bank = Bank(mm, 0, '<')
+        assert bank.length == 2 and bank.data_length == 4
 
-        # Debug output
-        print(f"Bank: offset={hex(bank.offset)}, length={bank.length}, data_offset={hex(bank.data_offset)}")
-
-        # We don't have direct access to the decoded fields in Bank object,
-        # but we can verify the encoding by manually decoding the data
         data_offset = bank.data_offset
-
-        # Verify the data_offset is within bounds
         assert data_offset + 4 <= len(mm), f"Data offset {data_offset} + 4 exceeds buffer size {len(mm)}"
 
-        # Now it's safe to decode
         data_word = struct.unpack("<I", mm[data_offset:data_offset+4])[0]
 
         decoded_channel = (data_word >> 13) & 0x000F
         decoded_charge = data_word & 0x1FFF
         decoded_time = ((data_word >> 17) & 0x3FFF) * 4
 
-        # Verify decoded values match what we encoded
         assert decoded_channel == channel
         assert decoded_charge == charge
         assert decoded_time == time

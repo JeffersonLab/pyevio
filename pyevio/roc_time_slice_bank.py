@@ -65,8 +65,8 @@ class StreamInfoBank(Bank):
             # Big endian: high word first, then low word
             self.timestamp = (timestamp_high << 32) | timestamp_low
 
-        # Store TSS end offset for later use
-        self.tss_end_offset = tss_offset + (self.tss_length * 4)
+        # A segment's length counts the words after its one header word.
+        self.tss_end_offset = tss_offset + (self.tss_length + 1) * 4
 
     def _parse_aggregation_info_segment(self):
         """Parse the Aggregation Info Segment (AIS)."""
@@ -311,7 +311,7 @@ class RocTimeSliceBank(Bank):
 
         # Start after Stream Info Bank
         current_offset = self.sib.ais_end_offset
-        end_offset = self.offset + (self.length * 4)
+        end_offset = self.end_offset
 
         # Match payload banks with payload infos
         for i, payload_info in enumerate(self.sib.payload_infos):
@@ -324,7 +324,7 @@ class RocTimeSliceBank(Bank):
                 self.payload_banks.append(payload_bank)
 
                 # Move to next bank
-                current_offset += payload_bank.length * 4
+                current_offset += payload_bank.size
             except Exception as e:
                 # If there's an error parsing a payload bank, log it and continue
                 if self.payload_banks:

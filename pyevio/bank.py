@@ -82,17 +82,23 @@ class Bank(BankHeader):
         # Parse bank header
         self._parse_header()
 
-        # Calculate data offset and size
+        # The length word counts the words that follow it, so a bank with
+        # length N occupies N + 1 words. Counting the length word itself
+        # drops the last payload word of every leaf.
         self.header_size = 8  # 2 words * 4 bytes
         self.data_offset = self.offset + self.header_size
-        self.data_length = (self.length * 4) - self.header_size
-        self.size = self.length * 4
+        self.size = (self.length + 1) * 4
+        self.data_length = max(0, self.size - self.header_size)
 
         # End offset for this bank
         self.end_offset = self.offset + self.size
 
         # Child banks (will be parsed on demand)
         self._children = None
+
+        # Why a child walk stopped early (short strings with offsets); empty when
+        # every child length fit inside this bank.
+        self.errors: List[str] = []
 
     def _parse_header(self):
         """Parse the bank header from the buffer."""
@@ -155,64 +161,29 @@ class Bank(BankHeader):
         if self._children is not None:
             return self._children
 
-        # Initialize empty children list
         self._children = []
 
-        # Start from the beginning of the data section
+        # Walk the children by their length words. Every length is checked
+        # against this bank's end before it is trusted: a child that has no
+        # room for its two header words, declares length 0 (no room for its
+        # second header word) or runs past the parent is corrupt data. The
+        # walk stops there, keeps the children found so far and records why.
         current_offset = self.data_offset
-        end_offset = self.end_offset
-
-        while current_offset < end_offset:
-            # We need at least 4 bytes to read a length
-            if current_offset + 4 > end_offset:
+        while current_offset < self.end_offset:
+            if current_offset + self.header_size > self.end_offset:
+                self.errors.append(f"bank header at 0x{current_offset:X} needs 8 bytes, "
+                                   f"parent ends at 0x{self.end_offset:X}")
                 break
 
-            try:
-                # Read bank length
-                bank_length = struct.unpack(self.endian + 'I',
-                                            self.mm[current_offset:current_offset+4])[0]
+            child_length = struct.unpack(self.endian + 'I', self.mm[current_offset:current_offset + 4])[0]
+            child_end = current_offset + (child_length + 1) * 4
+            if child_length == 0 or child_end > self.end_offset:
+                self.errors.append(f"bank at 0x{current_offset:X} declares {child_length} words, "
+                                   f"ends at 0x{child_end:X}, parent ends at 0x{self.end_offset:X}")
+                break
 
-                # Basic sanity check: bank shouldn't exceed parent boundary
-                if current_offset + (bank_length * 4) > end_offset:
-                    # If we're near the end (just a word or two left), this might be data padding
-                    # Skip to the next word and continue
-                    current_offset += 4
-                    continue
-
-                # Even a length of 1 is valid for data banks (just the length word itself)
-                # In this case the bank has no additional data beyond the length word
-
-                # Check if we have enough space for this bank
-                if bank_length == 0:
-                    # Zero-length banks are invalid - skip this word
-                    current_offset += 4
-                    continue
-
-                if current_offset + (bank_length * 4) > end_offset:
-                    # Bank goes beyond parent boundary - skip this word
-                    current_offset += 4
-                    continue
-
-                # Try to create bank object
-                try:
-                    child = Bank.from_buffer(self.mm, current_offset, self.endian)
-
-                    # Add to children
-                    self._children.append(child)
-
-                    # Move to next bank by adding this bank's length
-                    current_offset += bank_length * 4
-
-                except Exception as e:
-                    # Error creating bank - skip ahead
-                    if self._children and hasattr(self, 'verbose') and self.verbose:
-                        print(f"Error parsing bank at 0x{current_offset:X}: {str(e)}")
-                    current_offset += 4
-                    continue
-
-            except Exception as e:
-                # Error reading/processing data - skip ahead
-                current_offset += 4
+            self._children.append(Bank.from_buffer(self.mm, current_offset, self.endian))
+            current_offset = child_end
 
         return self._children
 
@@ -292,7 +263,7 @@ class Bank(BankHeader):
         """Return string representation of the bank header."""
         return f"""Bank (0x{self.tag:04x}, {self.type_name}):
   Offset:    0x{self.offset:08x}
-  Length:    {self.length} words ({self.length * 4} bytes)
+  Length:    {self.length} words ({self.size} bytes with the length word)
   Tag:       0x{self.tag:04x}
   Pad:       {self.pad}
   Data Type: 0x{self.data_type:02x}
