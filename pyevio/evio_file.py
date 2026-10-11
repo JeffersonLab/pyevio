@@ -5,7 +5,7 @@ from typing import List, Tuple, Optional, Dict, Any, Iterator
 from datetime import datetime
 
 from pyevio.file_header import FileHeader, detect_endian, file_type_name, unsupported_version_error
-from pyevio.record import Record
+from pyevio.record import Record, padded_to_words
 from pyevio.record_header import RecordHeader
 from pyevio.event import Event
 
@@ -26,6 +26,18 @@ class EvioFile:
     14-word file header followed by 14-word record headers. Files without a
     file header (EVIO v4 blocks, v1—3 blocks) raise ``ValueError`` naming
     the version at open.
+
+    Checks: ``checks`` lists what the record scan found wrong with the file
+    as tuples whose first item names the check: ``("truncated_tail",
+    declared_bytes, present_bytes, events_salvaged)`` for a final record
+    that runs past the end of the file (its complete events are kept),
+    ``("bad_record_header", offset, message)`` where the scan stopped on
+    bytes that are no record header.
+
+    Resources: ``close()`` (or the ``with`` block) releases the mmap and the
+    file. A numpy array or memoryview that still refers to the mmap makes
+    ``close()`` raise ``BufferError`` after closing the file; drop the views
+    and call ``close()`` again.
     """
 
     def __init__(self, filename: str, verbose: bool = False):
@@ -49,23 +61,22 @@ class EvioFile:
 
         self.header_layout, self.header = self._detect_layout()
 
-        # Calculate initial offset after file header
-        self.first_record_offset = self.header.header_length * 4
+        # The first record follows the file header, its index array and its
+        # user header (dictionary, first event), which is stored padded to
+        # whole words although the header gives the unpadded byte count.
+        self.first_record_offset = (self.header.header_length * 4
+                                    + self.header.index_array_length
+                                    + padded_to_words(self.header.user_header_length))
 
-        # Skip index array if present
-        if self.header.index_array_length > 0:
-            self.first_record_offset += self.header.index_array_length
-
-        # Skip user header if present
-        if self.header.user_header_length > 0:
-            self.first_record_offset += self.header.user_header_length
-
-        # Record objects (will be created on demand)
-        self._records = {}
+        # One Record is cached: the one accessed last. A Record owns its
+        # decompressed buffer and Event objects, so caching every record
+        # would hold a whole compressed file in memory.
+        self._cached_record: Optional[Record] = None
         self._trailer = None
 
         # Scan record offsets
         self._trailer_offset: Optional[int] = None
+        self.checks: List[tuple] = []
         self._record_offsets = self._scan_record_offsets()
 
         # Total event count cache
@@ -93,15 +104,32 @@ class EvioFile:
         block_version = struct.unpack(endian + 'I', self.mm[20:24])[0] & 0xFF
         raise unsupported_version_error(block_version, f"block header at offset 0, no file header: {self.filename}")
 
-    def __del__(self):
-        """Cleanup resources when object is destroyed"""
+    def close(self) -> None:
+        """Release the mmap and the file.
+
+        The file is closed whatever happens to the mmap. ``mmap.close()``
+        raises ``BufferError`` while a numpy array or memoryview exported
+        from it is alive; that error is re-raised with the cause named, and
+        the mmap stays open until those views are dropped and ``close()`` is
+        called again.
+        """
+        mm = getattr(self, 'mm', None)
+        file = getattr(self, 'file', None)
         try:
-            if hasattr(self, 'mm') and self.mm and not getattr(self.mm, 'closed', True):
-                self.mm.close()
-            if hasattr(self, 'file') and self.file and not self.file.closed:
-                self.file.close()
-        except (ValueError, AttributeError, BufferError):
-            # Ignore errors during cleanup
+            if mm is not None and not mm.closed:
+                mm.close()
+        except BufferError as error:
+            raise BufferError(f"cannot close the mmap of {self.filename}: a numpy array or memoryview "
+                              f"still refers to it; drop those views, then call close() again") from error
+        finally:
+            if file is not None and not file.closed:
+                file.close()
+
+    def __del__(self):
+        """Release resources at garbage collection; errors are silent here."""
+        try:
+            self.close()
+        except Exception:
             pass
 
     def __enter__(self):
@@ -109,8 +137,8 @@ class EvioFile:
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        """Cleanup when exiting context"""
-        self.__del__()
+        """Release resources; a BufferError from a live view propagates (see close)."""
+        self.close()
 
     def _scan_record_offsets(self) -> List[int]:
         """
@@ -123,7 +151,12 @@ class EvioFile:
         offset = self.first_record_offset
 
         while offset < self.file_size:
-            record = Record(self.mm, offset, self.header.endian)
+            try:
+                record = Record(self.mm, offset, self.header.endian)
+            except ValueError as error:
+                # Bytes that are no record header end the scan (F6 tightens this).
+                self.checks.append(("bad_record_header", offset, str(error)))
+                break
 
             # The trailer closes the file: it lists records, holds no events
             # and is exposed as `trailer`, never as a data record.
@@ -131,11 +164,24 @@ class EvioFile:
                 self._trailer_offset = offset
                 break
 
-            if record.size < record.header_size:
-                raise ValueError(f"Record at offset 0x{offset:X} declares {record.header.record_length} words, "
-                                 f"less than its {record.header.header_length}-word header")
+            # A record shorter than its header (or an 8-word-short header)
+            # cannot be stepped over: the scan would stand still.
+            if record.header.header_length < 8 or record.size < record.header_size:
+                self.checks.append(("bad_record_header", offset,
+                                    f"record declares {record.header.record_length} words "
+                                    f"with a {record.header.header_length}-word header"))
+                break
 
             record_offsets.append(offset)
+
+            # A final record cut by the end of the file: keep it, walk its
+            # complete events and report the byte counts.
+            if record.is_truncated:
+                record.index = len(record_offsets) - 1
+                salvaged = len(record.scan_events())
+                self.checks.append(("truncated_tail", record.declared_end - offset, self.file_size - offset, salvaged))
+                break
+
             offset += record.size
 
             # Stop if this was the last record. Some CODA writers set the
@@ -183,12 +229,10 @@ class EvioFile:
         if index < 0 or index >= len(self._record_offsets):
             raise IndexError(f"Record index {index} out of range (0-{len(self._record_offsets)-1})")
 
-        # Check if record is already cached
-        if index not in self._records:
-            offset = self._record_offsets[index]
-            self._records[index] = Record(self.mm, offset, self.header.endian, index=index)
+        if self._cached_record is None or self._cached_record.index != index:
+            self._cached_record = Record(self.mm, self._record_offsets[index], self.header.endian, index=index)
 
-        return self._records[index]
+        return self._cached_record
 
     def get_records(self) -> List[Record]:
         """
@@ -217,11 +261,16 @@ class EvioFile:
             Total event count
         """
         if self._total_event_count is None:
-            self._total_event_count = 0
-            for record in self.iter_records():
-                self._total_event_count += record.event_count
+            self._total_event_count = sum(self.record_event_count(record) for record in self.iter_records())
 
         return self._total_event_count
+
+    @staticmethod
+    def record_event_count(record: Record) -> int:
+        """Events a record contributes: the header count, or the complete events present in a truncated tail."""
+        if record.is_truncated:
+            return len(record.scan_events())
+        return record.event_count
 
     def get_record_and_event(self, global_index: int) -> Tuple[Record, Event]:
         """
@@ -244,7 +293,7 @@ class EvioFile:
 
         for record_idx in range(len(self._record_offsets)):
             record = self.get_record(record_idx)
-            event_count = record.event_count
+            event_count = self.record_event_count(record)
 
             # Check if this event is in the current record
             if current_index + event_count > global_index:

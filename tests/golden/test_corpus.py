@@ -53,12 +53,10 @@ if not os.path.isfile(MANIFEST_PATH):
 with open(MANIFEST_PATH) as manifest_file:
     MANIFEST = yaml.safe_load(manifest_file)
 
-# The LZ4 files fail today: the data records are walked as uncompressed
-# bytes (F4). The uncompressed files pass since F3 (trailer counted as a
-# record; its index read as events) was fixed in PHASE1.
-XFAIL_BY_COMPRESSION = {
-    "lz4": "F4: LZ4 records walked as uncompressed bytes",
-}
+# Failures by compression kind. Empty since PHASE1 fixed F3 (trailer counted
+# as a record; its index read as events) and F4 (LZ4 records walked as
+# uncompressed bytes). A new entry carries the finding number.
+XFAIL_BY_COMPRESSION = {}
 
 
 def corpus_params():
@@ -83,9 +81,13 @@ def test_corpus_file(row):
         scanned_events = 0
         past_eof = 0
         for record_i in range(record_count):
-            for offset, length in evio_file.get_record(record_i).scan_events():
+            record = evio_file.get_record(record_i)
+            # Event offsets are into record.buffer: the file for a plain
+            # record, the decompressed bytes for a compressed one.
+            buffer_end = file_size if record.buffer is evio_file.mm else len(record.buffer)
+            for offset, length in record.scan_events():
                 scanned_events += 1
-                if offset + length > file_size:
+                if offset + length > buffer_end:
                     past_eof += 1
 
     # The counts are the report numbers: print them so `-s` or the log shows them.

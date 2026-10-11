@@ -78,16 +78,11 @@ LEGACY_VERSION = {
     "v13_legacy.evio": 3,
 }
 
-# Today's failures by case name, decided by running every row with pyevio.
-# F4: compressed records are walked as uncompressed bytes: the event walk
-#     stops at the first garbage length, so fewer events are found.
-# Fixed in PHASE1 and no longer listed: F3 (trailer index read as events),
-# F9 (version message for legacy files), F39 (HIPO file type id).
-XFAIL_BY_CASE = {
-    "lz4_le.evio": "F4: LZ4 record walked as uncompressed bytes",
-    "lz4best_le.evio": "F4: LZ4_BEST record walked as uncompressed bytes",
-    "gzip_le.evio": "F4: gzip record walked as uncompressed bytes",
-}
+# Failures by case name, decided by running every row with pyevio. Empty
+# since PHASE1 fixed F3 (trailer index read as events), F4 (compressed
+# records), F9 (version message for legacy files) and F39 (HIPO file type
+# id). A new entry carries the finding number.
+XFAIL_BY_CASE = {}
 
 
 def manifest_params():
@@ -142,14 +137,21 @@ def test_golden_file(row):
     with EvioFile(path) as evio_file:
         header_events = evio_file.get_total_event_count()
         scanned_events = 0
-        past_eof = []
+        past_end = []
+        errors = []
         for record_i in range(evio_file.record_count):
             record = evio_file.get_record(record_i)
+            # Event offsets are into record.buffer: the file for a plain
+            # record, the decompressed bytes for a compressed one.
+            buffer_end = file_size if record.buffer is evio_file.mm else len(record.buffer)
             for offset, length in record.scan_events():
                 scanned_events += 1
-                if offset + length > file_size:
-                    past_eof.append((record_i, offset, length))
+                if offset + length > buffer_end:
+                    past_end.append((record_i, offset, length))
+            errors += record.errors
 
     assert header_events == row["event_count"], "record header event counts"
     assert scanned_events == row["event_count"], "events found by scan_events"
-    assert past_eof == [], f"events past EOF ({file_size} bytes): {past_eof[:5]}"
+    assert past_end == [], f"events past their buffer end: {past_end[:5]}"
+    assert errors == [], f"record errors: {errors[:5]}"
+    assert evio_file.checks == [], f"file checks: {evio_file.checks}"
