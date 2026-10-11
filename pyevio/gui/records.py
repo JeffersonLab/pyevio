@@ -95,7 +95,7 @@ class RecordsPane(Pane):
         Binding("[", "previous_page", "Previous page"),
     ]
     DEFAULT_CSS = """
-    RecordsPane #records-placeholder {
+    RecordsPane #records-status {
         height: auto;
         color: $text-muted;
     }
@@ -109,8 +109,7 @@ class RecordsPane(Pane):
         self.ends_with_trailer = False  # the last row of the page is the trailer
 
     def compose(self):
-        # The status line keeps the id of the earlier placeholder so the app tests keep reading it.
-        yield Static(NO_FILE_TEXT, id="records-placeholder", markup=False)
+        yield Static(NO_FILE_TEXT, id="records-status", markup=False)
         yield RecordsTable(cursor_type="row", zebra_stripes=True, id="records-table")
 
     def on_mount(self) -> None:
@@ -165,7 +164,7 @@ class RecordsPane(Pane):
         return f"rows {first}—{last} of {self.total:,} records{trailer}  ·  Enter opens the record{hint}"
 
     def _set_status(self, text: str) -> None:
-        self.query_one("#records-placeholder", Static).update(text)
+        self.query_one("#records-status", Static).update(text)
 
     @property
     def has_next_page(self) -> bool:

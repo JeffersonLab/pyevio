@@ -131,7 +131,7 @@ async def test_detail_panel_shows_fields_errors_and_words(session, synthetic):
         assert pane.detail["id"] == "r1/e0"
         fields = panel_text(app, "fields")
         assert "tag           0xFF60 (65,376)" in fields and "kind          event" in fields and "structure     Bank" in fields
-        assert panel_text(app, "placeholder") == "node 'r1/e0'"
+        assert panel_text(app, "path") == "node 'r1/e0'"
         assert panel_text(app, "errors") == ""
         words = pane.words_page
         assert words["record"] == 1 and int(words["words"][0], 16) == event.data["length"] and words["count"] == 64
@@ -182,7 +182,7 @@ async def test_show_node_expands_the_path_and_selects_the_node(session, syntheti
         record = child_by_id(tree.root, "r1")
         assert record.is_expanded and tree.cursor_node is child_by_id(record, "r1/e2")
         assert pane.detail["id"] == "r1/e2" and pane.detail["index"] == 2
-        assert panel_text(app, "placeholder") == "node 'r1/e2'"
+        assert panel_text(app, "path") == "node 'r1/e2'"
         await pilot_wait(pilot, lambda: child_by_id(record, "r1/e2").data.get("_total") is not None, what="event children")
         assert ids(child_by_id(record, "r1/e2"))[0] == "r1/e2/b" + format(child_by_id(record, "r1/e2").children[0].data["offset"], "x")
 
@@ -224,7 +224,7 @@ async def test_more_child_pages_the_root_and_show_node_pages_until_present(sessi
         await pilot.pause()
         tree.move_cursor(more)
         await pilot.pause()
-        assert "101 more" in panel_text(app, "placeholder")
+        assert "101 more" in panel_text(app, "path")
         await pilot.press("enter")
         await pilot.pause()
         assert len(tree.root.children) == 601 and ids(tree.root)[-1] == "t" and tree.root.children[-1].data["kind"] == "trailer"

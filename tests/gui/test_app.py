@@ -26,7 +26,7 @@ async def test_start_with_a_file_runs_the_analysis_and_fills_the_panes(session, 
         await pilot_wait(pilot, lambda: app.query_one(OverviewPane).summary is not None, what="stats_ready")
         assert "analysis done" in status_text(app) and "3 records" in status_text(app)
         assert app.query_one(OverviewPane).summary["totals"]["n_hits"] == synthetic["expected_hits"]
-        assert "4 records" in str(app.query_one("#records-placeholder", Static).render())
+        assert "4 records" in str(app.query_one("#records-status", Static).render())
         assert error_text(app) == ""
         assert app.sub_title == str(synthetic["path"].resolve())
 
@@ -42,7 +42,7 @@ async def test_number_keys_switch_tabs(session, synthetic):
             assert tabs.active == tab
         app.show_structure_node("r1")
         await pilot.pause()
-        assert tabs.active == "tab-structure" and "'r1'" in str(app.query_one("#structure-placeholder", Static).render())
+        assert tabs.active == "tab-structure" and "'r1'" in str(app.query_one("#structure-path", Static).render())
 
 
 async def test_open_screen_opens_a_typed_path_and_an_unreadable_file_keeps_the_current_one(session, synthetic):
@@ -58,7 +58,7 @@ async def test_open_screen_opens_a_typed_path_and_an_unreadable_file_keeps_the_c
         await pilot_wait(pilot, lambda: not isinstance(app.screen, OpenScreen), what="open screen to close")
         assert "garbage.evio" in error_text(app)
         assert session.path == synthetic["path"].resolve() and session.state == "done"
-        assert app.query_one(RecordsPane) is not None and "4 records" in str(app.query_one("#records-placeholder", Static).render())
+        assert app.query_one(RecordsPane) is not None and "4 records" in str(app.query_one("#records-status", Static).render())
 
         # Escape cancels without touching the session.
         await pilot.press("o")
@@ -76,7 +76,7 @@ async def test_start_without_a_file_shows_the_open_screen(session, synthetic):
         assert "No file open" in status_text(app)
         app.screen.query_one("#open-path", Input).value = str(synthetic["path"])
         await pilot.press("enter")
-        await pilot_wait(pilot, lambda: app.query_one(StructurePane).query_one("#structure-placeholder", Static).render() is not None
+        await pilot_wait(pilot, lambda: app.query_one(StructurePane).query_one("#structure-path", Static).render() is not None
                          and session.is_open, what="file to open")
         await pilot_wait(pilot, lambda: app.query_one(OverviewPane).summary is not None, what="stats_ready")
         assert "analysis done" in status_text(app)

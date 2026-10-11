@@ -13,7 +13,7 @@ from test_stream_stats import write_synthetic_file  # noqa: E402
 
 
 def status(app) -> str:
-    return str(app.query_one("#records-placeholder", Static).render())
+    return str(app.query_one("#records-status", Static).render())
 
 
 def cell_texts(table: RecordsTable, row_key: str) -> list:
@@ -66,7 +66,7 @@ async def test_enter_opens_the_record_in_the_structure_tab(session, synthetic):
         await pilot.pause()
         tabs = app.query_one("#tabs", TabbedContent)
         assert tabs.active == "tab-structure"
-        assert "'r2'" in str(app.query_one("#structure-placeholder", Static).render())
+        assert "'r2'" in str(app.query_one("#structure-path", Static).render())
 
 
 async def test_paging_through_a_file_of_more_than_one_page(tmp_path):

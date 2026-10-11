@@ -185,7 +185,7 @@ class StructurePane(Pane):
         height: 1fr;
         padding: 0 1;
     }
-    StructurePane #structure-placeholder {
+    StructurePane #structure-path {
         text-style: bold;
     }
     StructurePane #structure-errors {
@@ -214,7 +214,7 @@ class StructurePane(Pane):
         with Horizontal():
             yield self._tree
             with DetailPanel(id="structure-detail"):
-                yield Static("Open a file to browse its structure.", id="structure-placeholder")
+                yield Static("Open a file to browse its structure.", id="structure-path")
                 yield Static("", id="structure-fields", markup=False)
                 yield Static("", id="structure-errors", markup=False)
                 yield Static("", id="structure-entries", markup=False)
@@ -401,7 +401,7 @@ class StructurePane(Pane):
             self._clear_panel(f"{data['remaining']:,} more children of {data['id'] or 'file'!r} — press Enter to load them")
             return
         self.detail = data
-        self.query_one("#structure-placeholder", Static).update(f"node {data.get('id', '')!r}" if data.get("id") else "node '' (file)")
+        self.query_one("#structure-path", Static).update(f"node {data.get('id', '')!r}" if data.get("id") else "node '' (file)")
         self.query_one("#structure-fields", Static).update("\n".join(fields_lines(data)))
         errors = data.get("errors") or []
         self.query_one("#structure-errors", Static).update(Text("\n".join(errors), style="bold red") if errors else "")
@@ -439,7 +439,7 @@ class StructurePane(Pane):
         self.query_one("#structure-hex-note", Static).update(note)
 
     def _clear_panel(self, heading: str) -> None:
-        self.query_one("#structure-placeholder", Static).update(heading)
+        self.query_one("#structure-path", Static).update(heading)
         for widget_id in ("fields", "errors", "entries", "hex-title", "hex", "hex-note"):
             self.query_one(f"#structure-{widget_id}", Static).update("")
 
