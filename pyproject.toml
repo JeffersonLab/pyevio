@@ -22,6 +22,7 @@ test = ["pytest"]
 # uv installs the dev group by default, so `uv run pytest` works without extras.
 [dependency-groups]
 dev = [
+    "pyarrow>=21.0.0",
     "pytest",
     "pyyaml>=6.0.3",
 ]
