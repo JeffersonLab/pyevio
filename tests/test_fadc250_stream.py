@@ -59,10 +59,16 @@ def roc_bank(roc, stream_mask, frame_number, timestamp, payload_banks, with_stre
     return bank(roc, 0x10, (2 << 4) | stream_mask, children)
 
 
-def stream_frame(frame_number, timestamp, roc_banks):
-    sib = bank(fs.SIB_TAG, 0x20, 0,
-               segment(fs.SIB_TSS_SEGMENT_TAG, 1, [frame_number, timestamp & 0xFFFFFFFF, timestamp >> 32])
-               + segment(fs.SIB_AIS_SEGMENT_TAG, 1, [0x00070021] * 24))
+DEGENERATE_AIS = [0x00070021] * 24  # what the SRO hardware writes: one stream's (rocid << 16 | status) in every slot
+DISTINCT_AIS = [(roc << 16) | status for roc in (7, 9, 25, 27, 29, 44, 45, 46, 53, 54, 55, 84) for status in (0x21, 0x22)]
+
+
+def stream_frame(frame_number, timestamp, roc_banks, ais_entries=DEGENERATE_AIS):
+    """Stream event: SIB (TSS + AIS, the AIS left out when ``ais_entries`` is None) followed by the ROC banks."""
+    sib_segments = segment(fs.SIB_TSS_SEGMENT_TAG, 1, [frame_number, timestamp & 0xFFFFFFFF, timestamp >> 32])
+    if ais_entries is not None:
+        sib_segments += segment(fs.SIB_AIS_SEGMENT_TAG, 1, ais_entries)
+    sib = bank(fs.SIB_TAG, 0x20, 0, sib_segments)
     return bank(fs.STREAM_EVENT_TAG, 0x10, 0, sib + [w for rb in roc_banks for w in rb])
 
 
@@ -137,6 +143,43 @@ def test_decode_frame_columns(endian):
     assert rocs["first_hit_index"].tolist() == [0, 4]
     assert fs.empty_banks_per_port(frame.empty_banks) == {(7, 1, 5): 1, (7, 2, 16): 1}
     assert frame.empty_banks["module_id"].tolist() == [fs.MODULE_FADC250] * 2
+    assert (frame.n_ais_entries, frame.n_ais_distinct) == (24, 1)
+
+
+# ---------------------------------------------------------------- AIS segment (I15)
+@pytest.mark.parametrize("endian", ["<", ">"])
+def test_ais_entries_are_counted_identical_and_distinct(endian):
+    """The decoder counts the AIS entries and their distinct values per frame; it never walks the AIS for ROC banks."""
+    big = endian == ">"
+    rocs = [roc_bank(7, 1, FRAME_NUMBER, TIMESTAMP, [(1, HITS_A)], big_endian=big)]
+    degenerate = fs.decode_frame(to_words(stream_frame(FRAME_NUMBER, TIMESTAMP, rocs), endian))
+    distinct = fs.decode_frame(to_words(stream_frame(FRAME_NUMBER, TIMESTAMP, rocs, ais_entries=DISTINCT_AIS), endian))
+    without_ais = fs.decode_frame(to_words(stream_frame(FRAME_NUMBER, TIMESTAMP, rocs, ais_entries=None), endian))
+
+    assert (degenerate.n_ais_entries, degenerate.n_ais_distinct) == (24, 1)
+    assert (distinct.n_ais_entries, distinct.n_ais_distinct) == (24, 24)
+    assert (without_ais.n_ais_entries, without_ais.n_ais_distinct) == (0, 0)
+    # The AIS changes nothing else: hits, ROC banks and errors are the same in all three frames.
+    for frame in (degenerate, distinct, without_ais):
+        assert frame.errors == 0 and frame.n_hits == 3 and frame.n_roc_banks == 1 and frame.frame_number == FRAME_NUMBER
+
+    hits = fs.decode_frames([to_words(stream_frame(FRAME_NUMBER, TIMESTAMP, rocs, ais_entries=entries), endian)
+                             for entries in (DEGENERATE_AIS, DISTINCT_AIS, None, [0x00070021, 0x00070021, 0x002C0021])])
+    assert hits.frames["n_ais_entries"].tolist() == [24, 24, 0, 3]
+    assert hits.frames["n_ais_distinct"].tolist() == [1, 24, 0, 2]
+    assert fs.ais_degenerate_mask(hits.frames).tolist() == [True, False, False, False]
+
+
+def test_ais_segment_past_sib_end_is_an_error_and_keeps_the_hits():
+    words = one_crate_frame()
+    ais_header_i = 4 + 3 + 1  # SIB length and header, then the 4-word TSS segment
+    assert (words[ais_header_i] >> 24) == fs.SIB_AIS_SEGMENT_TAG
+    words[ais_header_i] = (words[ais_header_i] & 0xFFFF0000) | 500
+
+    frame = fs.decode_frame(to_words(words, "<"))
+    assert frame.errors == 1 and "SIB segment length 500" in frame.error_messages[0]
+    assert (frame.n_ais_entries, frame.n_ais_distinct) == (0, 0)
+    assert frame.n_hits == 6 and frame.n_roc_banks == 2  # the ROC walk starts at the SIB end, untouched by the AIS
 
 
 @pytest.mark.parametrize("endian", ["<", ">"])
@@ -393,3 +436,5 @@ def test_corpus_record0_hits_match_payload_word_sums():
     assert fs.non_fadc_words_per_port(hits.non_fadc_banks) == {k: v for k, v in expected_dcrb_per_port.items() if v}
     assert hits.non_fadc_words == sum(expected_dcrb_per_port.values()) == 400_546
     assert hits.n_hits + hits.non_fadc_words == hits.n_payload_words == 499_660
+    # I15: every AIS lists 24 slots holding one value (one stream's entry repeated).
+    assert hits.frames["n_ais_entries"].tolist() == [24] * 11 and hits.frames["n_ais_distinct"].tolist() == [1] * 11

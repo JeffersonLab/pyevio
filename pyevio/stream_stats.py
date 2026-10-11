@@ -35,7 +35,7 @@ import numpy as np
 from pyevio.evio_file import EvioFile
 from pyevio.decoders import fadc250_stream as fs
 
-STATS_VERSION = "1"
+STATS_VERSION = "2"  # 2: AIS entry counts per frame and the frames_with_ais / frames_with_degenerate_ais totals
 N_CHANNELS = 16
 CHARGE_BIN_SHIFT = 6  # 13-bit charge >> 6 → 128 bins of 64
 N_CHARGE_BINS = (fs.HIT_CHARGE_MASK + 1) >> CHARGE_BIN_SHIFT
@@ -63,7 +63,7 @@ class StatsCancelled(Exception):
 FRAME_SCAN_DTYPE = np.dtype([("record", np.uint32), ("event", np.uint32), ("frame", np.uint32), ("timestamp", np.uint64)])
 FRAME_STATS_DTYPE = np.dtype([
     ("event_index", np.uint32), ("frame", np.uint32), ("timestamp", np.uint64), ("n_hits", np.uint32),
-    ("non_fadc_words", np.uint32), ("errors", np.uint16),
+    ("non_fadc_words", np.uint32), ("errors", np.uint16), ("n_ais_entries", np.uint16), ("n_ais_distinct", np.uint16),
 ])
 
 
@@ -174,6 +174,7 @@ class Accumulator:
 
     ARRAYS_3D = ("rate", "charge", "time")  # (roc, port, channel, bins)
     ARRAYS_2D = ("empty_banks", "non_fadc_words_per_port")  # (roc, port)
+    AIS_TOTALS = ("frames_with_ais", "frames_with_degenerate_ais")  # counted from the frame table, not StreamHits attributes
 
     def __init__(self, t_first: int, t_last: int, n_rate_bins: int):
         self.t_first, self.t_last, self.n_rate_bins = int(t_first), int(t_last), int(n_rate_bins)
@@ -189,7 +190,8 @@ class Accumulator:
         self.frame_rows = []  # FRAME_STATS_DTYPE arrays, concatenated at the end
         self.totals = {name: 0 for name in ("n_events", "n_frames", "n_other_events", "n_hits", "n_payload_banks",
                                             "n_empty_payload_banks", "n_unmapped_payload_banks", "n_payload_words",
-                                            "non_fadc_words", "n_flag_words", "errors")}
+                                            "non_fadc_words", "n_flag_words", "errors",
+                                            "frames_with_ais", "frames_with_degenerate_ais")}
         self.error_messages: List[str] = []
 
     def _grow(self, rocs: np.ndarray, ports: np.ndarray) -> None:
@@ -259,10 +261,13 @@ class Accumulator:
         for name in FRAME_STATS_DTYPE.names:
             frame_rows[name] = hits.frames[name]
         self.frame_rows.append(frame_rows)
+        # The AIS totals come from the frame table; the other totals are StreamHits attributes of the same name.
+        self.totals["frames_with_ais"] += int(np.count_nonzero(hits.frames["n_ais_entries"]))
+        self.totals["frames_with_degenerate_ais"] += int(np.count_nonzero(fs.ais_degenerate_mask(hits.frames)))
         for name in self.totals:
             if name == "n_frames":
                 self.totals[name] += hits.n_stream_frames
-            else:
+            elif name not in self.AIS_TOTALS:
                 self.totals[name] += getattr(hits, name)
         self.error_messages = (self.error_messages + hits.error_messages)[:MAX_ERROR_MESSAGES]
 
@@ -360,6 +365,8 @@ class StreamStats:
     n_flag_words: int
     errors: int
     error_messages: List[str]
+    frames_with_ais: int  # frames whose SIB holds an aggregation info segment (0x42)
+    frames_with_degenerate_ais: int  # of those, frames whose entries all hold one value (I15)
     checks: FrameChecks
     rocs: np.ndarray
     ports: np.ndarray
@@ -383,7 +390,7 @@ class StreamStats:
     SCALAR_FIELDS = ("version", "path", "file_size", "bytes_processed", "tick_ns", "workers", "wall_seconds", "n_records", "n_trailer_records",
                      "n_events", "n_frames", "n_other_events", "n_out_of_bounds_events", "n_hits", "n_payload_banks",
                      "n_empty_payload_banks", "n_unmapped_payload_banks", "n_payload_words", "non_fadc_words",
-                     "n_flag_words", "errors", "error_messages")
+                     "n_flag_words", "errors", "error_messages", "frames_with_ais", "frames_with_degenerate_ais")
 
     @property
     def frame_period_ns(self) -> float:
@@ -511,7 +518,9 @@ def compute_stream_stats(path: str, workers: Optional[int] = None, rate_bins: in
         n_payload_banks=partial.totals["n_payload_banks"], n_empty_payload_banks=partial.totals["n_empty_payload_banks"],
         n_unmapped_payload_banks=partial.totals["n_unmapped_payload_banks"], n_payload_words=partial.totals["n_payload_words"],
         non_fadc_words=partial.totals["non_fadc_words"], n_flag_words=partial.totals["n_flag_words"],
-        errors=partial.totals["errors"], error_messages=partial.error_messages, checks=checks,
+        errors=partial.totals["errors"], error_messages=partial.error_messages,
+        frames_with_ais=partial.totals["frames_with_ais"], frames_with_degenerate_ais=partial.totals["frames_with_degenerate_ais"],
+        checks=checks,
         rocs=partial.rocs, ports=partial.ports, module_id=partial.module_id, module_ids=module_ids, module_words=module_words,
         frames=frames, rate_counts=partial.rate, rate_edges_ns=rate_edges_ns, frames_per_rate_bin=frames_per_rate_bin,
         occupancy=partial.charge.sum(axis=3), charge_hist=partial.charge,

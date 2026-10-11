@@ -7,7 +7,7 @@ from click.testing import CliRunner
 
 from pyevio.decoders import fadc250_stream as fs
 from pyevio import stream_stats
-from test_fadc250_stream import DCRB_WORDS, bank, hit_word, roc_bank, stream_frame
+from test_fadc250_stream import DCRB_WORDS, DEGENERATE_AIS, DISTINCT_AIS, bank, hit_word, roc_bank, stream_frame
 from test_fadc250_stream_example import make_record, pack_words
 
 CORPUS_FILE = "/data/evio-lib/corpus/sro_000791.evio.00000.v6"
@@ -24,9 +24,14 @@ def make_trailer(number):
     return header + index
 
 
-def write_synthetic_file(path, n_records=3, frames_per_record=4, with_trailer=True):
-    """Striped frames (stride 4) with one duplicate and one gap; fADC250 crate 7 and DCRB crate 44."""
+def write_synthetic_file(path, n_records=3, frames_per_record=4, with_trailer=True, distinct_ais=False):
+    """Striped frames (stride 4) with one duplicate and one gap; fADC250 crate 7 and DCRB crate 44.
+
+    The AIS of every frame repeats one entry as the SRO hardware writes it; ``distinct_ais``
+    lists 24 distinct entries instead.
+    """
     import struct
+    ais_entries = DISTINCT_AIS if distinct_ais else DEGENERATE_AIS
     records = []
     frame = 1000
     expected_hits = 0
@@ -47,7 +52,7 @@ def write_synthetic_file(path, n_records=3, frames_per_record=4, with_trailer=Tr
             events.append(pack_words(stream_frame(frame_here, frame_here * PERIOD, [
                 roc_bank(7, 1, frame_here, frame_here * PERIOD, [(1, hits_port_1), (3, hits_port_3), (5, [])]),
                 roc_bank(44, 2, frame_here, frame_here * PERIOD, [(4, DCRB_WORDS), (6, [])], module_id=fs.MODULE_DCRB),
-            ])))
+            ], ais_entries=ais_entries)))
         if record_i == 1:
             events.append(pack_words(bank(0xFF50, 0x10, 0, bank(1, 1, 0, [1, 2]))))  # one non-stream event
         records.append(make_record(record_i + 1, events))
@@ -96,6 +101,9 @@ def test_synthetic_file_totals_and_checks(tmp_path, workers):
     assert checks.first_frame == 1000 and checks.last_frame == max(frame_numbers)
     assert stats.frames["frame"].tolist() == frame_numbers
     assert stats.frames["n_hits"].tolist()[:2] == [17, 18]
+    # I15: every frame's AIS repeats one entry in its 24 slots
+    assert stats.frames_with_ais == stats.frames_with_degenerate_ais == 12
+    assert stats.frames["n_ais_entries"].tolist() == [24] * 12 and stats.frames["n_ais_distinct"].tolist() == [1] * 12
 
     # rate: every bin with frames reports hits / (frames × period); the sum over bins recovers the hits
     rate = stats.rate_hz()
@@ -106,6 +114,14 @@ def test_synthetic_file_totals_and_checks(tmp_path, workers):
     assert int(stats.rate_counts[0, 0, 0].sum()) == 12 and len(channel_rate) == 8 and channel_rate.sum() > 0
 
 
+@pytest.mark.parametrize("workers", [1, 2])
+def test_distinct_ais_entries_are_not_degenerate(tmp_path, workers):
+    path, _, _ = write_synthetic_file(tmp_path / "distinct_ais.evio", distinct_ais=True)
+    stats = stream_stats.compute_stream_stats(path, workers=workers, rate_bins=8, chunk_records=1)
+    assert stats.n_frames == stats.frames_with_ais == 12 and stats.frames_with_degenerate_ais == 0
+    assert stats.frames["n_ais_entries"].tolist() == [24] * 12 and stats.frames["n_ais_distinct"].tolist() == [24] * 12
+
+
 def test_npz_round_trip_and_version(tmp_path):
     path, expected_hits, _ = write_synthetic_file(tmp_path / "synthetic.evio", n_records=1)
     stats = stream_stats.compute_stream_stats(path, workers=1, rate_bins=4)
@@ -114,6 +130,7 @@ def test_npz_round_trip_and_version(tmp_path):
     loaded = stream_stats.StreamStats.load(str(out))
     assert loaded.n_hits == expected_hits == stats.n_hits
     assert loaded.checks == stats.checks
+    assert (loaded.frames_with_ais, loaded.frames_with_degenerate_ais) == (4, 4)
     assert loaded.rocs.tolist() == stats.rocs.tolist()
     assert np.array_equal(loaded.rate_counts, stats.rate_counts) and np.array_equal(loaded.frames, stats.frames)
     assert loaded.version == stream_stats.STATS_VERSION
@@ -161,6 +178,10 @@ def test_corpus_first_200_records_match_decoder():
     assert stats.checks.frame_period_ticks == 65536
     assert int(stats.rate_counts.sum()) == decoded.n_hits and int(stats.occupancy.sum()) == decoded.n_hits
     assert stats.errors == 0 and stats.n_trailer_records == 0
+    # I15: every frame of the run carries a 24-slot AIS holding one value
+    assert stats.frames_with_ais == stats.frames_with_degenerate_ais == 2200
+    assert int(fs.ais_degenerate_mask(decoded.frames).sum()) == 2200
+    assert np.unique(decoded.frames["n_ais_entries"]).tolist() == [24] and np.unique(decoded.frames["n_ais_distinct"]).tolist() == [1]
     # rate_hz is hits per second of live time: its frame-weighted mean equals hits / (frames × period)
     rate = stats.rate_hz()
     weighted_mean = (rate * stats.frames_per_rate_bin).sum() / stats.frames_per_rate_bin.sum()

@@ -13,7 +13,7 @@ reference report (space/reports/phase0_sro_reference.md)::
     event bank          tag 0xFF60, type 0x10 (bank of banks), num 0
       SIB               tag 0xFF31, type 0x20 (bank of segments)
         TSS segment     tag 0x32, len 3: {frame number, timestamp lo, timestamp hi}
-        AIS segment     tag 0x42, len 24: aggregated-stream entries (ignored here)
+        AIS segment     tag 0x42, len 24: aggregated-stream entries (counted, never walked)
       ROC bank          tag = ROC id, type 0x10, num = stream status byte
         stream-info     tag 0xFF30, type 0x20: TSS 0x31 + payload-port map 0x41
         payload bank    tag = payload port, type 0x00, one word per hit
@@ -34,6 +34,13 @@ payload words are two-word channel masks; the decoder counts them per
 ROC bank as ``non_fadc_words`` and decodes nothing from them. A
 port absent from the map (or a ROC bank without a stream-info bank) is
 decoded as fADC250 and counted in ``n_unmapped_payload_banks``.
+
+The AIS segment should list the aggregated streams, one ``(rocid << 16) | status``
+entry per stream. The SRO hardware writes one stream's entry into every slot, a
+value that changes from frame to frame. The decoder records per frame how many
+entries the segment has and how many distinct values (``n_ais_entries``,
+``n_ais_distinct``); :func:`ais_degenerate_mask` names the repeated case. ROC
+banks come from the bank walk alone; the AIS never locates them.
 
 An empty payload bank has length 1 and num 1; a data bank has num 0. Both
 are valid. The walk trusts no length word: every bank end is checked
@@ -96,6 +103,7 @@ FRAME_DTYPE = np.dtype([
     ("frame", np.uint32), ("timestamp", np.uint64), ("n_hits", np.uint32), ("first_hit_index", np.uint64),
     ("event_index", np.uint32), ("n_roc_banks", np.uint16), ("n_payload_banks", np.uint16),
     ("n_empty_payload_banks", np.uint16), ("non_fadc_words", np.uint32), ("errors", np.uint16),
+    ("n_ais_entries", np.uint16), ("n_ais_distinct", np.uint16),
 ])
 ROC_BANK_DTYPE = np.dtype([
     ("event_index", np.uint32), ("frame", np.uint32), ("roc", np.uint16), ("stream", np.uint8),
@@ -176,6 +184,15 @@ def validate_hit_words(hit_words: np.ndarray) -> None:
     n_bad = int(np.count_nonzero(raw_time_field > HIT_TIME_MASK))
     if n_bad:
         raise ValueError(f"{n_bad} hit words have a time field outside {HIT_TIME_BITS} bits (bit 31 set)")
+
+
+def ais_degenerate_mask(frames: np.ndarray) -> np.ndarray:
+    """True per frame whose AIS segment holds several entries with one value: one stream repeated in every slot.
+
+    ``frames`` is a table with ``n_ais_entries`` and ``n_ais_distinct`` columns (``FRAME_DTYPE``
+    or ``stream_stats.FRAME_STATS_DTYPE``). A frame without an AIS (0 entries) is never degenerate.
+    """
+    return (frames["n_ais_entries"] > 1) & (frames["n_ais_distinct"] == 1)
 
 
 def _is_big_endian(words: np.ndarray) -> bool:
@@ -270,6 +287,8 @@ class FrameHits:
     n_flag_words: int
     errors: int
     error_messages: List[str]
+    n_ais_entries: int = 0  # entries of the SIB's aggregation info segment (0x42); 0 without one
+    n_ais_distinct: int = 0  # distinct values among them; 1 with several entries means one stream repeated
 
 
 def concatenate_stream_hits(chunks: Iterable[StreamHits]) -> StreamHits:
@@ -348,7 +367,7 @@ class _Walk:
             self.error(event_index, 0, f"event length {event_end} words runs past the {n} words given")
             event_end = n
 
-        frame_number, timestamp, sib_end = self._read_sib(read, event_end, event_index)
+        frame_number, timestamp, sib_end, n_ais_entries, n_ais_distinct = self._read_sib(w, read, event_end, event_index)
         hits_before, payload_before, empty_before = self.n_hits, self.n_payload_banks, self.n_empty_payload_banks
         other_before, roc_banks_before = self.non_fadc_words, len(self.roc_bank_rows)
 
@@ -373,25 +392,49 @@ class _Walk:
             frame_number, timestamp, self.n_hits - hits_before, hits_before, event_index,
             len(self.roc_bank_rows) - roc_banks_before, self.n_payload_banks - payload_before,
             self.n_empty_payload_banks - empty_before, self.non_fadc_words - other_before, self.errors - errors_before,
+            n_ais_entries, n_ais_distinct,
         ))
 
-    def _read_sib(self, read, event_end: int, event_index: int):
-        """Return ``(frame_number, timestamp, sib_end)`` from the SIB at word 2; zeros on a bad SIB."""
+    def _read_sib(self, w, read, event_end: int, event_index: int):
+        """Return ``(frame_number, timestamp, sib_end, n_ais_entries, n_ais_distinct)`` from the SIB at word 2.
+
+        Zeros on a bad SIB. ``sib_end`` comes from the SIB length word alone, so the ROC bank
+        walk that starts there never depends on the AIS segment or its contents.
+        """
         if 3 >= event_end:
             self.error(event_index, 2, "no room for the stream info bank")
-            return 0, 0, event_end
+            return 0, 0, event_end, 0, 0
         sib_end = 2 + read(2) + 1
         if sib_end > event_end:
             self.error(event_index, 2, f"SIB length {read(2)} runs past the event end {event_end}")
-            return 0, 0, event_end
+            return 0, 0, event_end, 0, 0
         if (read(3) >> 16) != SIB_TAG:
             self.error(event_index, 3, f"expected SIB tag 0x{SIB_TAG:04X}, found 0x{read(3) >> 16:04X}")
-            return 0, 0, sib_end
+            return 0, 0, sib_end, 0, 0
         # The TSS is the first segment of the SIB: header word tag<<24 | pad<<22 | type<<16 | length.
         if 7 >= sib_end or (read(4) >> 24) != SIB_TSS_SEGMENT_TAG or (read(4) & 0xFFFF) < 3:
             self.error(event_index, 4, "SIB does not start with a time slice segment (tag 0x32, length 3)")
-            return 0, 0, sib_end
-        return read(5), read(6) | (read(7) << 32), sib_end
+            return 0, 0, sib_end, 0, 0
+        n_ais_entries, n_ais_distinct = self._count_ais_entries(w, read, 4 + (read(4) & 0xFFFF) + 1, sib_end, event_index)
+        return read(5), read(6) | (read(7) << 32), sib_end, n_ais_entries, n_ais_distinct
+
+    def _count_ais_entries(self, w, read, segment_i: int, sib_end: int, event_index: int):
+        """Return ``(entries, distinct values)`` of the 0x42 segment among the SIB segments from ``segment_i``.
+
+        ``(0, 0)`` without one. The entries are uint32 words; a segment length past the SIB end
+        is a counted error and ends the search.
+        """
+        while segment_i < sib_end:
+            header = read(segment_i)
+            segment_len = header & 0xFFFF
+            segment_end = segment_i + segment_len + 1
+            if segment_end > sib_end:
+                self.error(event_index, segment_i, f"SIB segment length {segment_len} runs past the SIB end {sib_end}")
+                return 0, 0
+            if (header >> 24) == SIB_AIS_SEGMENT_TAG:
+                return segment_len, int(np.unique(w[segment_i + 1:segment_end]).size)
+            segment_i = segment_end
+        return 0, 0
 
     def _read_payload_port_map(self, read, info_i: int, info_end: int, event_index: int, big_endian: bool) -> dict:
         """Return ``{port: module id}`` from the 0x41 segment of the stream-info bank at ``info_i``.
@@ -537,6 +580,8 @@ def decode_frame(words: np.ndarray, event_index: int = 0) -> FrameHits:
         n_unmapped_payload_banks=stream_hits.n_unmapped_payload_banks,
         n_payload_words=stream_hits.n_payload_words, non_fadc_words=stream_hits.non_fadc_words,
         n_flag_words=stream_hits.n_flag_words, errors=stream_hits.errors, error_messages=stream_hits.error_messages,
+        n_ais_entries=int(frame_row["n_ais_entries"]) if is_stream_frame else 0,
+        n_ais_distinct=int(frame_row["n_ais_distinct"]) if is_stream_frame else 0,
     )
 
 

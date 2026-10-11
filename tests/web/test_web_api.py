@@ -33,7 +33,23 @@ def test_open_progress_summary_match_direct_stats(client, served_root):
                                   "mean_size": summary["records"]["mean_size"]}
     checks = {row["name"]: row for row in summary["checks"]}
     assert checks["missing frames"]["status"] == "warn" and checks["decode errors"]["status"] == "ok"
+    # I15: every synthetic frame's AIS repeats one entry, as the SRO hardware writes it
+    assert totals["frames_with_ais"] == totals["frames_with_degenerate_ais"] == 12
+    assert checks["AIS entries identical"]["status"] == "info" and checks["AIS entries identical"]["value"] == 12
+    assert "repeats one stream's entry in every slot" in checks["AIS entries identical"]["detail"]
     assert summary["stats"]["cached"] is False
+
+
+def test_distinct_ais_entries_pass_the_check(client, served_root):
+    """I15: a file whose AIS lists 24 distinct streams gets an ok row with no detail."""
+    from test_stream_stats import write_synthetic_file
+    write_synthetic_file(served_root["root"] / "runs" / "distinct_ais.evio", distinct_ais=True)
+    file_id, _ = open_and_wait(client, "runs/distinct_ais.evio")
+
+    summary = client.get(f"/api/files/{file_id}/summary").json()
+    assert summary["totals"]["frames_with_ais"] == 12 and summary["totals"]["frames_with_degenerate_ais"] == 0
+    checks = {row["name"]: row for row in summary["checks"]}
+    assert checks["AIS entries identical"] == {"name": "AIS entries identical", "status": "ok", "value": 0, "detail": ""}
 
 
 def test_summary_before_done_is_409(client, served_root, monkeypatch):
