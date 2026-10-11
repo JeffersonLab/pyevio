@@ -21,7 +21,10 @@ test = ["pytest"]
 
 # uv installs the dev group by default, so `uv run pytest` works without extras.
 [dependency-groups]
-dev = ["pytest"]
+dev = [
+    "pytest",
+    "pyyaml>=6.0.3",
+]
 
 
 [build-system]
@@ -38,6 +41,11 @@ include = ["pyevio*"]
 
 [project.scripts]
 pyevio = "pyevio.cli:main"
+
+[tool.pytest.ini_options]
+markers = [
+    "slow: scans multi-gigabyte files; tests/golden/test_corpus.py runs only with PYEVIO_CORPUS=1",
+]
 
 [tool.setuptools.package-data]
 pyevio = ["web/*.html"]
