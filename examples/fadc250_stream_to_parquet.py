@@ -1,20 +1,19 @@
 """Decode CODA streaming fADC250 hits from an EVIO v6 file into Parquet.
 
-Container access goes through pyevio. The hit words are decoded with numpy.
-Requires pyarrow (pip install pyarrow). Browse the same files with `pyevio web`.
-
-Hit word layout (big-endian u32):
-  bits 30-17 time in 4 ns ticks from frame start
-  bits 16-13 channel
-  bits 12-0  charge q
+Container access goes through pyevio; the frame walk and the hit word
+layout live in pyevio.decoders.fadc250_stream. Requires pyarrow
+(pip install pyarrow). Browse the same files with `pyevio web`.
 
 Usage:
   python fadc250_stream_to_parquet.py run.evio            # writes out/run.hits.parquet + out/run.frames.parquet
   python fadc250_stream_to_parquet.py runs/*.evio --out out --force
 
 Read the output:
-  hits   = pq.read_table("out/run.hits.parquet")    # frame, roc, port, ch, t_ns, q (sorted by frame, t_ns)
-  frames = pq.read_table("out/run.frames.parquet")  # frame, timestamp_ns, n_hits, hit_offset
+  hits   = pq.read_table("out/run.hits.parquet")    # frame, roc, stream, port, ch, t_ns, q (sorted by frame, event, t_ns)
+  frames = pq.read_table("out/run.frames.parquet")  # frame, timestamp_ns, n_hits, hit_offset (sorted by frame, event)
+
+Every hit of a file stays in memory until it is written, so a 15 GB SRO file
+needs more RAM than most hosts have; this example is for files up to a few GB.
 """
 import argparse
 import sys
@@ -22,90 +21,82 @@ import time
 from pathlib import Path
 
 import numpy as np
-import pyarrow as pa
-import pyarrow.parquet as pq
 from pyevio import EvioFile
+from pyevio.decoders import fadc250_stream as fs
 
-DECODER_VERSION = "1"
-HIT_FORMAT = "fadc250-stream-v1: t=bits[30:17]*4ns ch=bits[16:13] q=bits[12:0]"
+DECODER_VERSION = "2"
+HIT_FORMAT = fs.HIT_FORMAT
 
 
 # ---------------------------------------------------------------- decoding
 def decode(path):
-    """Return (hits dict of numpy arrays, frames dict, stats dict)."""
-    f = EvioFile(str(path))
-    mm = f.mm
-    dt = np.dtype(f.header.endian + "u4")
-    words, b_frame, b_roc, b_port, b_n = [], [], [], [], []     # raw hit words + one entry per non-empty payload bank
-    frames, ts_list, nhits, payload_words = [], [], [], 0
-    skipped = 0
-    for ri in range(f.record_count):
-        for e in f.get_record(ri).get_events():
-            w = np.frombuffer(mm, dtype=dt, count=e.length // 4, offset=e.offset)
-            if (w[1] >> 16) != 0xFF60 or (w[3] >> 16) != 0xFF31:
-                skipped += 1
-                continue
-            frame = int(w[5])
-            ts = int(w[6]) | (int(w[7]) << 32)
-            i = 2 + int(w[2]) + 1                      # skip stream-info bank
-            nh = 0
-            while i < len(w):
-                end = i + int(w[i]) + 1
-                roc = int(w[i + 1] >> 16)
-                j = i + 2
-                if (w[j + 1] >> 16) == 0xFF30:         # skip ROC stream-info bank
-                    j += int(w[j]) + 1
-                while j < end:
-                    plen = int(w[j])
-                    payload_words += plen - 1
-                    if plen > 1:
-                        words.append(w[j + 2:j + plen + 1])
-                        b_frame.append(frame); b_roc.append(roc); b_port.append(int(w[j + 1] >> 16)); b_n.append(plen - 1)
-                        nh += plen - 1
-                    j += plen + 1
-                i = end
-            frames.append(frame)
-            ts_list.append(ts)
-            nhits.append(nh)
-    h = np.concatenate(words).astype(np.uint32) if words else np.empty(0, np.uint32)
-    del words
-    b_n = np.asarray(b_n, dtype=np.int64)
+    """Return (hits dict of numpy arrays, frames dict, stats dict, StreamHits).
+
+    Hits are sorted by (frame, event index, t_ns) and frames by (frame, event index),
+    so the hit ranges in the frames table stay right when a frame number repeats.
+    """
+    with EvioFile(str(path)) as evio_file:
+        endian = evio_file.header.endian
+        chunks = []
+        out_of_bounds = 0
+        event_index = 0
+        for record_i in range(evio_file.record_count):
+            record = evio_file.get_record(record_i)
+            events = []
+            # A trailer record declares 0 events; its index holds record positions, not event lengths.
+            for offset, length in record.get_event_offsets()[:record.header.event_count]:
+                if offset + length > evio_file.file_size:
+                    out_of_bounds += 1
+                    continue
+                events.append(fs.event_words(evio_file.mm, offset, length, endian))
+            chunks.append(fs.decode_frames(events, first_event_index=event_index))
+            event_index += len(events)
+        stream_hits = fs.concatenate_stream_hits(chunks)
+        del chunks
+        record_count = evio_file.record_count
+
+    order = np.lexsort((stream_hits.t_ns, stream_hits.event_index, stream_hits.frame))
     hits = {
-        "frame": np.repeat(np.asarray(b_frame, np.uint32), b_n),
-        "roc": np.repeat(np.asarray(b_roc, np.uint16), b_n),
-        "port": np.repeat(np.asarray(b_port, np.uint8), b_n),
-        "ch": ((h >> 13) & 0xF).astype(np.uint8),
-        "t_ns": (((h >> 17) & 0x3FFF) * 4).astype(np.uint16),
-        "q": (h & 0x1FFF).astype(np.uint16),
+        "frame": stream_hits.frame[order],
+        "roc": stream_hits.roc[order],
+        "stream": stream_hits.stream[order],
+        "port": stream_hits.port[order],
+        "ch": stream_hits.channel[order],
+        "t_ns": stream_hits.t_ns[order],
+        "q": stream_hits.charge[order],
     }
-    # sort by frame, then time in frame (the event builder delivers some frames out of order)
-    order = np.lexsort((hits["t_ns"], hits["frame"]))
-    hits = {k: v[order] for k, v in hits.items()}
-    frames, ts_list, nhits = map(np.asarray, (frames, ts_list, nhits))
-    out_of_order = int((np.diff(frames) < 0).sum())
-    order = np.argsort(frames, kind="stable")
-    frames, ts_list, nhits = frames[order], ts_list[order], nhits[order]
-    offsets = np.concatenate([[0], np.cumsum(nhits)[:-1]]) if len(nhits) else np.empty(0)
-    frame_tab = {"frame": frames.astype(np.uint32), "timestamp_ns": ts_list.astype(np.uint64),
-                 "n_hits": nhits.astype(np.uint32), "hit_offset": offsets.astype(np.uint64)}
-    stats = {"records": f.record_count, "frames": len(frames), "hits": len(h), "skipped_events": skipped,
-             "out_of_order": out_of_order, "payload_words": payload_words}
-    return hits, frame_tab, stats
+    frames = stream_hits.frames
+    out_of_order = int((np.diff(frames["frame"].astype(np.int64)) < 0).sum())
+    frame_order = np.lexsort((frames["event_index"], frames["frame"]))
+    frames = frames[frame_order]
+    n_hits = frames["n_hits"].astype(np.uint64)
+    offsets = np.concatenate([[0], np.cumsum(n_hits)[:-1]]) if len(n_hits) else np.empty(0)
+    frame_tab = {"frame": frames["frame"].astype(np.uint32), "timestamp_ns": frames["timestamp"].astype(np.uint64),
+                 "n_hits": frames["n_hits"].astype(np.uint32), "hit_offset": offsets.astype(np.uint64)}
+    stats = {"records": record_count, "frames": len(frames), "hits": stream_hits.n_hits,
+             "skipped_events": stream_hits.n_other_events + out_of_bounds, "out_of_order": out_of_order,
+             "payload_words": stream_hits.n_payload_words, "empty_payload_banks": stream_hits.n_empty_payload_banks,
+             "decode_errors": stream_hits.errors}
+    return hits, frame_tab, stats, stream_hits
 
 
-def validate(hits, frames, stats):
-    """Cheap self-consistency checks; raises AssertionError on failure."""
-    assert stats["hits"] == stats["payload_words"], "hit count != sum of (payload bank length - 1)"
-    assert int(frames["n_hits"].sum()) == stats["hits"], "per-frame hit counts do not add up"
-    if stats["hits"]:
-        assert hits["t_ns"].max() < 65536, "hit time outside the 65.5 us frame"
-    f = frames["frame"]
-    if len(f):
-        return {"missing_frames": int(f[-1] - f[0] + 1 - len(np.unique(f))), "duplicate_frames": int(len(f) - len(np.unique(f)))}
+def validate(stream_hits, frames):
+    """Self-consistency checks; raises ValueError on failure and returns the frame checks."""
+    stream_hits.validate()  # decode errors, hit words with bit 31 set, hit count vs payload words
+    if int(frames["n_hits"].sum()) != stream_hits.n_hits:
+        raise ValueError("per-frame hit counts do not add up")
+    frame_numbers = frames["frame"]
+    if len(frame_numbers):
+        n_unique = len(np.unique(frame_numbers))
+        return {"missing_frames": int(frame_numbers[-1] - frame_numbers[0] + 1 - n_unique),
+                "duplicate_frames": int(len(frame_numbers) - n_unique)}
     return {}
 
 
 def convert(path, out_dir, force=False):
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
     path, out_dir = Path(path), Path(out_dir)
     hits_p = out_dir / f"{path.stem}.hits.parquet"
     frames_p = out_dir / f"{path.stem}.frames.parquet"
@@ -113,8 +104,8 @@ def convert(path, out_dir, force=False):
         print(f"skip  {path.name} (already converted)")
         return
     t0 = time.time()
-    hits, frames, stats = decode(path)
-    checks = validate(hits, frames, stats)
+    hits, frames, stats, stream_hits = decode(path)
+    checks = validate(stream_hits, frames)
     meta = {"source_file": path.name, "source_bytes": str(path.stat().st_size), "decoder_version": DECODER_VERSION,
             "hit_format": HIT_FORMAT, **{k: str(v) for k, v in {**stats, **checks}.items()}}
     out_dir.mkdir(parents=True, exist_ok=True)
