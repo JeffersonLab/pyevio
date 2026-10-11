@@ -32,6 +32,15 @@ class ApiError(Exception):
         self.message = message
 
 
+EVIO_NAME_MARKERS = (".evio", ".dat", ".ev")
+
+
+def is_evio_name(name: str) -> bool:
+    """True for file names the folder browsers list by default (a marker anywhere in the name: ``run.evio.00000.v6`` counts)."""
+    lower = name.lower()
+    return any(marker in lower for marker in EVIO_NAME_MARKERS)
+
+
 WEB_DIR = Path(__file__).resolve().parent
 INDEX_HTML = WEB_DIR / "index.html"
 INSTALL_HINT = "The web viewer needs FastAPI and uvicorn: pip install 'pyevio[web]'"

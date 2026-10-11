@@ -12,7 +12,6 @@ dependencies = [
     "rich",
     "numpy",
     "matplotlib",
-    "textual"
 ]
 
 
@@ -21,6 +20,10 @@ test = ["pytest"]
 web = [
     "fastapi>=0.110",
     "uvicorn>=0.27",
+]
+gui = [
+    "textual>=4.0",
+    "textual-plotext>=1.0",
 ]
 
 # uv installs the dev group by default, so `uv run pytest` works without extras.
@@ -31,7 +34,10 @@ dev = [
     "playwright>=1.60.0",
     "pyarrow>=21.0.0",
     "pytest",
+    "pytest-asyncio>=0.24",
     "pyyaml>=6.0.3",
+    "textual>=4.0",
+    "textual-plotext>=1.0",
     "uvicorn>=0.39.0",
 ]
 
@@ -52,6 +58,8 @@ include = ["pyevio*"]
 pyevio = "pyevio.cli:main"
 
 [tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
 markers = [
     "slow: scans multi-gigabyte files; tests/golden/test_corpus.py runs only with PYEVIO_CORPUS=1",
 ]

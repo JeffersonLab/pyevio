@@ -32,9 +32,9 @@ The SRO detection walks the whole chain of 8-word headers at open: a chain in wh
 pip install pyevio
 ```
 
-The browser viewer installs as an extra: `pip install 'pyevio[web]'`. See [docs/web_viewer.md](docs/web_viewer.md).
+The browser viewer installs as an extra: `pip install 'pyevio[web]'` (see [docs/web_viewer.md](docs/web_viewer.md)); the console viewer as `pip install 'pyevio[gui]'` (see [docs/console_gui.md](docs/console_gui.md)).
 
-Requirements: Python 3.9 or later. Dependencies installed with the package: click, lz4, rich, numpy, matplotlib, textual.
+Requirements: Python 3.9 or later. Dependencies installed with the package: click, lz4, rich, numpy, matplotlib.
 
 ## Python API
 
@@ -171,7 +171,7 @@ pyevio hex run.evio 256 --bytes --endian '<'   # the default is big-endian
 
 ```bash
 pyevio ana run.evio --per-record           # event tag statistics over the file
-pyevio ui run.evio                         # console UI (textual)
+pyevio gui run.evio                        # console viewer (Textual; pip install 'pyevio[gui]')
 pyevio web /path/to/runs                   # browser viewer, see docs/web_viewer.md
 ```
 

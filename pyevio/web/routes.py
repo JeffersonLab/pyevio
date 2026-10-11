@@ -13,7 +13,7 @@ from fastapi import APIRouter, Query, Request
 from pydantic import BaseModel
 
 from pyevio.evio_file import EvioFile
-from pyevio.web import ApiError
+from pyevio.web import ApiError, is_evio_name
 from pyevio.web.auth import inside_root, resolve_under_root
 from pyevio.web.jobs import FileRegistry
 from pyevio.web.report import build_summary, histogram
@@ -22,14 +22,6 @@ from pyevio.web.structure import DEFAULT_CHILDREN, MAX_CHILDREN, MAX_WORDS, chil
 router = APIRouter(prefix="/api")
 
 # Files the folder browser lists by default; the corpus names end in ".evio.00000.v6", so match the stem too.
-EVIO_NAME_MARKERS = (".evio", ".dat", ".ev")
-
-
-def is_evio_name(name: str) -> bool:
-    lower = name.lower()
-    return any(marker in lower for marker in EVIO_NAME_MARKERS)
-
-
 def registry_of(request: Request) -> FileRegistry:
     return request.app.state.registry
 
