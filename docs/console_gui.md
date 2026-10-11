@@ -106,13 +106,13 @@ All histograms come from `pyevio stats`; the pane draws the bins it receives wit
 
 ![File-level plots](images/console_gui_plots_file.svg)
 
-**ROC:** the port × channel occupancy of the ROC, its hit rate over time, charge spectrum and hit time within the frame.
+**ROC:** the port × channel occupancy of the ROC, its hit rate over time, charge spectrum and hit time within the frame. The charge spectrum has a logarithmic y axis (`hits (log)`), as in the browser and the PNG: the bars are drawn at log10(1 + count), so empty bins stay at zero, and the ticks are labelled with the real counts (`1`, `10`, `100`, `1k`, …).
 
 ![Per-ROC plots](images/console_gui_plots_roc.svg)
 
 **Channel:** hit rate, charge spectrum and time in frame of one channel; `+` and `-` step through the channels of the ROC port by port.
 
-The heatmap colour ramp is square-root scaled, as in the browser, so a few hot channels do not flatten the rest.
+The heatmap is laid out by the pane itself, not by plotext: every row is the same whole number of lines and every column the same whole number of columns, the lines and columns left over are margins, and each count is written into its own cell. Its colour ramp is square-root scaled, as in the browser, so a few hot channels do not flatten the rest. In a plot lower than it has rows (16 ports in the 14 lines of a 40-line terminal) two rows share a line as half blocks, the upper row the colour of the `▀` and the lower one its background, and every other row is labelled; in one lower than half its rows the plot says how many lines it needs.
 
 ### Records
 
@@ -135,8 +135,8 @@ Right, the highlighted node: its id, every field of its header, its walk errors 
 ## Limitations
 
 - Plots have character resolution: a histogram with more bins than the plot is wide is rebinned to fit (the counts add up, the rate is averaged over the frames of the merged bins), and a plot narrower than 16 columns or lower than 6 rows stays blank. The PNG export keeps every bin.
-- The charge spectrum has a linear y axis in the terminal; the PNG uses a logarithmic one, as the browser does.
-- The counts in the occupancy heatmap are printed only when every count of the plot fits in its cell with a margin. With 16 ports or channels across and counts in the millions (`10.6M`, five characters) that takes a plot about 125 columns wide, i.e. a terminal of about 260 columns in the 2 × 2 grid; the screenshots above are at 260 × 50. Narrower, the cells show the colour only; the dash of an unmapped port is always shown.
+- The occupancy heatmap needs one line per row under its three bottom lines (axis, tick labels, titles), or half a line per row with the rows paired as half blocks: 16 ports take a plot 19 lines high (a terminal of about 50 lines in the 2 × 2 grid) for one row per line and 11 lines for the paired rows, below which the plot says how many lines it needs.
+- The counts in the occupancy heatmap are printed only when every count of the plot fits in its cell with a column to spare on each side. With 16 ports or channels across and counts in the millions (`10.6M`, five characters) that takes cells seven columns wide, a plot about 120 columns wide, i.e. a terminal of about 250 columns in the 2 × 2 grid; the screenshots above are at 260 × 50. Narrower, the cells show the colour only, but the dash of an unmapped port is always printed while each row has a line of its own; with the rows paired an unmapped port is grey only.
 - The detail column of the Structure tab cannot take the focus (a focusable widget inside a hidden tab would pull Textual back to that tab, see `pyevio/gui/structure.py`); it scrolls with the mouse wheel only. The tree and the record table scroll with the keys.
 - The step keys of the Plots tab (`]` `[` `}` `{` `+` `-`) are not listed in the footer; the hint line next to the selection boxes lists them.
 

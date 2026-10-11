@@ -18,10 +18,21 @@ saves every plot of the level.
 Each plot holds only the histogram dict and rebuilds its plotext figure in
 ``render``, so a resize or the focus border redraws it at the new size; the
 dicts are lists of numbers, never a view of the file.
+
+The occupancy heatmap is not a plotext figure: :func:`render_heatmap` lays the
+cells out as a Rich text itself, a whole number of lines per row and of columns
+per cell, so every row is the same height and every printed count is exact.
+plotext's ``matrix_plot`` resamples the matrix onto its canvas and, when the
+canvas is lower than the matrix has rows, merges rows: two ports then share a
+line, and their ``text()`` labels, centred on different lengths, overstrike each
+other (``93.6k`` under ``55k`` read ``955kk``).
 """
+import math
 from pathlib import Path
 from typing import Optional
 
+from rich.color import Color
+from rich.style import Style
 from rich.text import Text
 from textual import events, on
 from textual.binding import Binding
@@ -49,6 +60,10 @@ RAMP_HIGH = (120, 200, 255)
 DEAD_CELL = (90, 90, 90)
 TEXT_LIGHT, TEXT_DARK = (240, 240, 240), (20, 20, 20)
 MIN_PLOT_WIDTH, MIN_PLOT_HEIGHT = 16, 6
+HEATMAP_OVERHEAD = 3  # lines under the cells: the x axis, its tick labels, the axis titles
+HALF_BLOCK = "▀"  # two rows on one line: the upper row is the glyph's colour, the lower one its background
+DEAD_LABEL = "–"
+PAD = Style(dim=True)  # blanks before a visible run, as a run of their own (see render_heatmap)
 
 
 def heat_color(value: float, maximum: float) -> tuple:
@@ -60,6 +75,143 @@ def heat_color(value: float, maximum: float) -> tuple:
 def text_color_on(background: tuple) -> tuple:
     luminance = 0.299 * background[0] + 0.587 * background[1] + 0.114 * background[2]
     return TEXT_DARK if luminance > 150 else TEXT_LIGHT
+
+
+def cell_style(foreground: tuple, background: Optional[tuple] = None) -> Style:
+    return Style(color=Color.from_rgb(*foreground), bgcolor=Color.from_rgb(*background) if background else None)
+
+
+def heatmap_layout(grid: dict, width: int, height: int) -> dict:
+    """Where the cells of ``grid`` go in a plot of ``width`` × ``height`` characters; ``fits`` is False when they cannot.
+
+    The row labels and the axis take the left columns, the right frame the last one;
+    the three lines under the cells are the axis, its tick labels and the axis titles.
+    Each cell is ``cell_w`` columns by ``cell_h`` lines, whole numbers, and the
+    leftover columns and lines are margins (one spare line is the top frame), so
+    every row has the same height and every column the same width. When the lines
+    are fewer than the rows but at least half as many, ``halves`` is set: two rows
+    share a line, drawn as half blocks, and the counts are not printed.
+    """
+    rows, cols = len(grid["rows"]), len(grid["cols"])
+    label_w = max(len(label) for label in grid["rows"])
+    canvas_w, canvas_h = width - label_w - 2, height - HEATMAP_OVERHEAD
+    halves = canvas_h < rows
+    lines_needed = -(-rows // 2) if halves else rows
+    if canvas_w < cols or canvas_h < lines_needed:
+        return {"fits": False, "min_width": cols + label_w + 2, "min_height": -(-rows // 2) + HEATMAP_OVERHEAD}
+    cell_w, cell_h = canvas_w // cols, 1 if halves else canvas_h // rows
+    spare_w, spare_h = canvas_w - cell_w * cols, canvas_h - cell_h * lines_needed
+    top_frame = spare_h >= 1
+    top_margin = (spare_h - top_frame) // 2
+    left_margin = spare_w // 2
+    longest = max((len(format_compact(value)) for row, dead_row in zip(grid["values"], grid["dead"])
+                   for value, is_dead in zip(row, dead_row) if not is_dead), default=0)
+    longest_col_label = max(len(label) for label in grid["cols"])
+    return {"fits": True, "label_w": label_w, "canvas_w": canvas_w, "canvas_h": canvas_h, "cell_w": cell_w, "cell_h": cell_h,
+            "halves": halves, "top_frame": top_frame, "top_margin": top_margin,
+            "bottom_margin": spare_h - top_frame - top_margin, "left_margin": left_margin,
+            "with_values": not halves and longest + 2 <= cell_w,  # a margin of a column on each side
+            "x_step": max(1, -(-(longest_col_label + 2) // cell_w))}  # tick labels that do not touch
+
+
+def render_heatmap(grid: dict, width: int, height: int) -> Text:
+    """The occupancy ``grid`` (of :func:`occupancy_grid`) as ``height`` lines of ``width`` characters.
+
+    The cells are coloured by the square-root ramp, unmapped ports grey with a dash,
+    and the counts are printed in the cells when the longest one fits with a margin
+    (see :func:`heatmap_layout`). A plot too small for the rows and columns says so.
+    """
+    if grid["empty"] == "no stream frames":
+        return Text(grid["empty"], style="dim")
+    layout = heatmap_layout(grid, width, height)
+    if not layout["fits"]:
+        return Text(f"{len(grid['rows'])} × {len(grid['cols'])} cells need a plot of {layout['min_width']} × {layout['min_height']}; "
+                    f"this one is {width} × {height}", style="dim")
+    rows, cols = len(grid["rows"]), len(grid["cols"])
+    label_w, canvas_w, cell_w, cell_h = layout["label_w"], layout["canvas_w"], layout["cell_w"], layout["cell_h"]
+    maximum = max((value for row, dead_row in zip(grid["values"], grid["dead"])
+                   for value, is_dead in zip(row, dead_row) if not is_dead), default=0)
+    colors = [[DEAD_CELL if is_dead else heat_color(value, maximum) for value, is_dead in zip(row, dead_row)]
+              for row, dead_row in zip(grid["values"], grid["dead"])]
+    # Blanks before a visible run get a style of their own (PAD): the SVG screenshots give every run its own x, and some
+    # SVG renderers (rsvg) drop the non-breaking spaces at the start of a run, which would shift the run left.
+    left = " " * layout["left_margin"]
+    right = " " * (canvas_w - layout["left_margin"] - cell_w * cols)
+
+    def line_with(label: Optional[str], axis_char: str) -> Text:
+        """A line's start: the row label (or blanks) right-justified, the axis character, the left margin."""
+        line = Text()
+        if label is None:
+            line.append(" " * label_w, style=PAD)
+        else:
+            line.append(" " * (label_w - len(label)), style=PAD)
+            line.append(label)
+        line.append(axis_char)
+        line.append(left, style=PAD)
+        return line
+
+    def cell(text: str, row_i: int, col_i: int) -> list:
+        background = colors[row_i][col_i]
+        pad, label = Style(bgcolor=Color.from_rgb(*background)), cell_style(text_color_on(background), background)
+        before = (cell_w - len(text)) // 2
+        return [(" " * before, pad), (text, label), (" " * (cell_w - before - len(text)), pad)]
+
+    def blank() -> Text:
+        line = line_with(None, "│")
+        line.append(" " * (canvas_w - layout["left_margin"]), style=PAD)
+        line.append("│")
+        return line
+
+    lines = []
+    if layout["top_frame"]:
+        lines.append(Text.assemble((" " * label_w, PAD), "┌" + "─" * canvas_w + "┐"))
+    lines += [blank() for _ in range(layout["top_margin"])]
+    if layout["halves"]:
+        for line_i in range(-(-rows // 2)):
+            upper, lower = 2 * line_i, 2 * line_i + 1
+            line = line_with(grid["rows"][upper], "┤")
+            for col_i in range(cols):
+                below = colors[lower][col_i] if lower < rows else None
+                line.append(HALF_BLOCK * cell_w, style=cell_style(colors[upper][col_i], below))
+            line.append(right, style=PAD)
+            line.append("│")
+            lines.append(line)
+    else:
+        for row_i, (row, dead_row) in enumerate(zip(grid["values"], grid["dead"])):
+            for line_i in range(cell_h):
+                labelled = line_i == (cell_h - 1) // 2
+                line = line_with(grid["rows"][row_i], "┤") if labelled else line_with(None, "│")
+                for col_i, (value, is_dead) in enumerate(zip(row, dead_row)):
+                    text = ""
+                    if labelled and (is_dead or layout["with_values"]):
+                        text = DEAD_LABEL if is_dead else format_compact(value)
+                    for part, style in cell(text, row_i, col_i):
+                        line.append(part, style=style)
+                line.append(right, style=PAD)
+                line.append("│")
+                lines.append(line)
+    lines += [blank() for _ in range(layout["bottom_margin"])]
+    # The axis with a tick under the centre of every labelled column, the tick labels centred on their cells, the titles.
+    axis = ["─"] * canvas_w
+    ticks = Text.assemble((" " * (label_w + 1), PAD))
+    column = 0  # the next free column of the tick-label line, from the canvas start
+    for col_i in range(0, cols, layout["x_step"]):
+        start = layout["left_margin"] + col_i * cell_w
+        axis[start + (cell_w - 1) // 2] = "┬"
+        label = grid["cols"][col_i]
+        label_start = start + (cell_w - len(label)) // 2  # centred on the cell, wider than it when the cell is narrow
+        if label_start < column or label_start + len(label) > canvas_w:
+            continue  # no room: the label is left out whole, never cut to a wrong number
+        ticks.append(" " * (label_start - column), style=PAD)
+        ticks.append(label)
+        column = label_start + len(label)
+    lines.append(Text.assemble((" " * label_w, PAD), "└" + "".join(axis) + "┘"))
+    lines.append(ticks)
+    title_start = max(len(grid["row_title"]) + 1, label_w + 1 + canvas_w // 2 - len(grid["col_title"]) // 2)
+    lines.append(Text.assemble(grid["row_title"], (" " * (title_start - len(grid["row_title"])), PAD), grid["col_title"]))
+    text = Text("\n").join(lines)
+    text.no_wrap, text.overflow = True, "crop"
+    return text
 
 
 class ReleaseFocusOnHide:
@@ -116,6 +268,8 @@ class HistogramPlot(ReleaseFocusOnHide, PlotextPlot, can_focus=True):
         if width < MIN_PLOT_WIDTH or height < MIN_PLOT_HEIGHT:
             return Text("")
         try:
+            if self.hist["name"] == "occupancy":
+                return render_heatmap(occupancy_grid(self.hist), width, height)
             self.plt.clear_figure()
             empty = self._build(width, height)
             if empty:
@@ -126,15 +280,25 @@ class HistogramPlot(ReleaseFocusOnHide, PlotextPlot, can_focus=True):
 
     # ---------------------------------------------------------------- building the plotext figure
     def _build(self, width: int, height: int) -> Optional[str]:
-        """Draw ``self.hist`` into ``self.plt``; returns the reason when there is nothing to draw."""
+        """Draw the one-dimensional ``self.hist`` into ``self.plt``; returns the reason when there is nothing to draw."""
         hist = self.hist
-        if hist["name"] == "occupancy":
-            return self._build_heatmap(occupancy_grid(hist), width, height)
         data = series(rebin(hist, max(8, width - 12)))
         if data["empty"]:
             return data["empty"]
         plt = self.plt
         edges, values = data["edges"], data["values"]
+        y_label = data["y_label"]
+        if data["log_y"]:
+            # The charge spectrum, logarithmic as in the browser and the PNG. Not plotext's own log scale: it takes the
+            # log of every value and raises on the empty bins, and reads ``ylim`` in log units. log10(1 + count) keeps
+            # empty bins at zero height; the ticks sit at the real counts 1, 10, 100, ... and are labelled with them.
+            top_count = max(values)
+            values = [math.log10(1 + value) if value > 0 else 0.0 for value in values]
+            decades = max(0, math.ceil(math.log10(top_count)))
+            step = max(1, -(-(decades + 1) // max(2, (height - 4) * 2 // 3)))  # fewer ticks than the canvas has lines
+            tick_counts = [10 ** power for power in range(0, decades + 1, step)]
+            y_ticks, y_labels = [math.log10(1 + count) for count in tick_counts], [format_compact(count) for count in tick_counts]
+            y_label += " (log)"
         if hist["name"] == "rate":
             xs, ys = [], []
             for i, value in enumerate(values):  # a step line: the bin's value from its left edge to its right one
@@ -145,65 +309,27 @@ class HistogramPlot(ReleaseFocusOnHide, PlotextPlot, can_focus=True):
             centers = [(edges[i] + edges[i + 1]) / 2 for i in range(len(values))]
             plt.bar(centers, values, width=1, color=SERIES_COLOR)
         top = max(values)
-        if hist["name"] != "rate" and top <= 4:
+        if data["log_y"]:
+            top = max(top, y_ticks[-1])
+        elif hist["name"] != "rate" and top <= 4:
             y_ticks = list(range(int(top) + 1))  # counts: whole numbers only
+            y_labels = tick_labels(y_ticks)
         else:
             y_ticks = nice_ticks(0, top, 4)
             if y_ticks and y_ticks[-1] < top:
                 y_ticks.append(round(y_ticks[-1] + (y_ticks[1] - y_ticks[0] if len(y_ticks) > 1 else top), 12))
+            y_labels = tick_labels(y_ticks)
+            if y_ticks:
+                top = y_ticks[-1]
         x_ticks = [tick for tick in nice_ticks(edges[0], edges[-1], 5) if edges[0] <= tick <= edges[-1]]
         plt.xlim(edges[0], edges[-1])
-        plt.ylim(0, y_ticks[-1] if y_ticks else top)
+        plt.ylim(0, top)
         if x_ticks:
             plt.xticks(x_ticks, tick_labels(x_ticks))
         if y_ticks:
-            plt.yticks(y_ticks, tick_labels(y_ticks))
+            plt.yticks(y_ticks, y_labels)
         plt.xlabel(data["x_label"])
-        plt.ylabel(data["y_label"])
-        return None
-
-    def _build_heatmap(self, grid: dict, width: int, height: int) -> Optional[str]:
-        """Each cell as a block of plotext matrix points, so the heatmap fills the widget; ``–`` marks unmapped ports."""
-        if grid["empty"] == "no stream frames":
-            return grid["empty"]
-        plt = self.plt
-        rows, cols = len(grid["rows"]), len(grid["cols"])
-        maximum = max((value for row, dead_row in zip(grid["values"], grid["dead"])
-                       for value, is_dead in zip(row, dead_row) if not is_dead), default=0)
-        # The matrix is at least as large as the canvas (one point per cell or more), so plotext leaves no gaps
-        # between the blocks; the canvas is the widget minus the tick labels, the frame and the axis titles.
-        block_w = max(1, -(-width // cols))
-        block_h = max(1, -(-height // rows))
-        colors = [[DEAD_CELL if is_dead else heat_color(value, maximum)
-                   for value, is_dead in zip(row, dead_row)] for row, dead_row in zip(grid["values"], grid["dead"])]
-        matrix = []
-        for row in colors:
-            line = [color for color in row for _ in range(block_w)]
-            matrix += [line] * block_h
-        plt.matrix_plot(matrix)
-        total_rows = rows * block_h
-        x_centers = [col_i * block_w + (block_w - 1) / 2 for col_i in range(cols)]
-        y_centers = [(total_rows - 1) - row_i * block_h - (block_h - 1) / 2 for row_i in range(rows)]
-        chars_per_cell = max(1, (width - 10) // cols)  # about one block's width in terminal columns
-        x_step = max(1, -(-4 // chars_per_cell))  # at least four columns per tick label
-        plt.xticks([x for i, x in enumerate(x_centers) if i % x_step == 0],
-                   [label for i, label in enumerate(grid["cols"]) if i % x_step == 0])
-        plt.yticks(y_centers, grid["rows"])
-        plt.xlabel(grid["col_title"])
-        plt.ylabel(grid["row_title"])
-        # The counts are printed in the cells when every one of them fits with a margin; the dash of an unmapped
-        # port always fits.
-        longest = max((len(format_compact(value)) for row, dead_row in zip(grid["values"], grid["dead"])
-                       for value, is_dead in zip(row, dead_row) if not is_dead), default=0)
-        with_values = longest + 1 < chars_per_cell
-        for row_i, (row, dead_row) in enumerate(zip(grid["values"], grid["dead"])):
-            for col_i, (value, is_dead) in enumerate(zip(row, dead_row)):
-                if not is_dead and not with_values:
-                    continue
-                label = "–" if is_dead else format_compact(value)
-                background = colors[row_i][col_i]
-                plt.text(label, x_centers[col_i], y_centers[row_i], color=text_color_on(background), background=background,
-                         alignment="center")
+        plt.ylabel(y_label)
         return None
 
 
