@@ -151,6 +151,10 @@ def test_stats_command_prints_summary(tmp_path):
     assert result.exit_code == 0, result.output
     assert f"{expected_hits:,}" in result.output and "stride 4" in result.output and "1 missing" in result.output
     assert "DCRB" in result.output and out.exists()
+    # F15 / F61: the CLI prints the same AIS check and warning count the viewer shows
+    flat = " ".join(result.output.split())  # rich wraps the table at 80 columns under CliRunner
+    assert "12 frames with an aggregation info segment, 12 repeat one entry in every slot" in flat
+    assert "Decode warnings 0" in flat
 
 
 @pytest.mark.skipif(os.environ.get("PYEVIO_CORPUS") != "1", reason="set PYEVIO_CORPUS=1 to run on the SRO corpus")
