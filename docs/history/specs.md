@@ -1,3 +1,5 @@
+Historical: the goal statement before the 2026-10 reader fixes; see README.md
+
 # **pyevio - EVIO v6 Reader Specification (v1.1)**
 
 **A Python library and CLI toolkit for reading/introspecting EVIO v6 files**
