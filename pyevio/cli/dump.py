@@ -182,8 +182,10 @@ def dump_command(ctx, filename, count, start, record, format_as, only, verbose):
     verbose = verbose or ctx.obj.get('VERBOSE', False)
     console = Console()
 
-    try:
-        with EvioFile(filename, verbose) as evio_file:
+    # The open sits outside the catch-all: a file pyevio cannot read raises
+    # ValueError, which the command group reports with exit code 1.
+    with EvioFile(filename, verbose) as evio_file:
+        try:
             # Validate record if specified
             if record is not None:
                 if record < 0 or record >= evio_file.record_count:
@@ -212,8 +214,8 @@ def dump_command(ctx, filename, count, start, record, format_as, only, verbose):
             rendered_output = render_rows(formatted_rows)
             print(rendered_output)
 
-    except Exception as e:
-        console.print(f"[red]Error: {str(e)}[/red]")
-        if verbose:
-            import traceback
-            console.print(traceback.format_exc())
+        except Exception as e:
+            console.print(f"[red]Error: {str(e)}[/red]")
+            if verbose:
+                import traceback
+                console.print(traceback.format_exc())

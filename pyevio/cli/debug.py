@@ -7,6 +7,7 @@ import numpy as np
 
 from pyevio.evio_file import EvioFile
 from pyevio.decoders import fadc250_stream
+from pyevio.display import offset_scope_note
 from pyevio.roc_time_slice_bank import RocTimeSliceBank
 from pyevio.utils import print_offset_hex
 
@@ -19,6 +20,9 @@ def display_record_info(console, record_obj, record_index):
     console.print(f"[bold cyan]Record #{record_index} Analysis[/bold cyan]")
     console.print(f"[bold]Offset: [green]0x{record_obj.offset:X}[{record_obj.offset//4}][/green], Length: [green]{record_obj.header.record_length}[/green] words[/bold]")
     console.print(f"[bold]Type: [green]{record_obj.header.event_type}[/green], Events: [green]{record_obj.event_count}[/green][/bold]")
+    note = offset_scope_note(record_obj)
+    if note:
+        console.print(note)
 
 
 def display_bank_header(console, bank, title=None):
