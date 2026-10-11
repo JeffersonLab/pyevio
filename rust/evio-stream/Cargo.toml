@@ -14,6 +14,5 @@ lz4_flex = { version = "0.11", default-features = false, features = ["std", "saf
 # gzip (and zlib) decompression for records with compression type 3.
 flate2 = "1.1"
 
-[profile.release]
-# Line tables for `perf`; no effect on speed.
-debug = 1
+# The release profile (debug = 1 for `perf`) is set in the workspace root
+# Cargo.toml, the only place cargo reads profiles from.
