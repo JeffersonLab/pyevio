@@ -22,9 +22,11 @@ Bins:
 Trailer records (header type 3) are skipped; events whose range runs past
 the file are counted, never read.
 """
+import io
 import json
 import multiprocessing
 import os
+import sys
 import struct
 import time
 from dataclasses import dataclass, field, asdict, fields
@@ -293,6 +295,34 @@ class Accumulator:
 _worker_file: Optional[EvioFile] = None
 
 
+def start_worker_services() -> None:
+    """Start the forkserver and the multiprocessing resource tracker, with a real stderr if the current one has none.
+
+    The resource tracker hands ``sys.stderr.fileno()`` to the process it spawns. A program that
+    captures stderr (Textual replaces it with an object whose ``fileno()`` is -1 while the app
+    runs) makes that spawn fail with ``ValueError: bad value(s) in fds_to_keep`` on the first
+    pool (F63). Both services start once per process and stay up, so ``pyevio gui`` calls this
+    before the app starts; ``compute_stream_stats`` calls it too, pointing ``sys.stderr`` at the
+    process's original stderr for the few milliseconds the start takes when the current one is
+    unusable. Harmless when the services already run.
+    """
+    from multiprocessing import forkserver, resource_tracker
+
+    try:
+        usable = sys.stderr is not None and sys.stderr.fileno() >= 0
+    except (AttributeError, OSError, ValueError, io.UnsupportedOperation):
+        usable = False
+    captured, original = sys.stderr, sys.__stderr__
+    if not usable and original is not None:
+        sys.stderr = original
+    try:
+        resource_tracker.ensure_running()
+        forkserver.ensure_running()
+    finally:
+        if not usable and original is not None:
+            sys.stderr = captured
+
+
 def _init_worker(path: str) -> None:
     global _worker_file
     _worker_file = EvioFile(path)
@@ -490,6 +520,7 @@ def compute_stream_stats(path: str, workers: Optional[int] = None, rate_bins: in
         records_done = 0
         # forkserver: a forked copy of a multi-threaded parent (numpy, pytest) may deadlock; workers re-import pyevio instead.
         context = multiprocessing.get_context("forkserver")
+        start_worker_services()
         # Leaving the `with` block (also by StatsCancelled) terminates the workers.
         with context.Pool(workers, initializer=_init_worker, initargs=(path,)) as pool:
             for start, end, result in pool.imap_unordered(_process_range, tasks):

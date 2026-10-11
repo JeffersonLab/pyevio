@@ -140,6 +140,3 @@ Right, the highlighted node: its id, every field of its header, its walk errors 
 - The detail column of the Structure tab cannot take the focus (a focusable widget inside a hidden tab would pull Textual back to that tab, see `pyevio/gui/structure.py`); it scrolls with the mouse wheel only. The tree and the record table scroll with the keys.
 - The step keys of the Plots tab (`]` `[` `}` `{` `+` `-`) are not listed in the footer; the hint line next to the selection boxes lists them.
 
-## Known problems
-
-- The analysis of a file that is not in the cache fails with `ValueError: bad value(s) in fds_to_keep` when it runs with more than one worker (observed with Textual 8.2.8 and Python 3.12): Textual replaces `sys.stderr` while the app runs, and the multiprocessing resource tracker cannot start without a real stderr. Until this is fixed, run `pyevio gui FILE --workers 1` (one process, slower), or analyze the file in `pyevio web` or an earlier `pyevio gui --workers 1` run first: the cache is shared, so the viewer then opens it at once.

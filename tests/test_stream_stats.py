@@ -191,3 +191,28 @@ def test_corpus_first_200_records_match_decoder():
     rate = stats.rate_hz()
     weighted_mean = (rate * stats.frames_per_rate_bin).sum() / stats.frames_per_rate_bin.sum()
     assert np.isclose(weighted_mean, stats.n_hits / stats.live_time_s, rtol=1e-9)
+
+
+def test_pool_starts_under_a_captured_stderr(tmp_path):
+    """F63: Textual replaces sys.stderr with an object whose fileno() is -1; the resource tracker's spawn then failed.
+
+    Runs in a fresh interpreter because the tracker and the forkserver start once per process:
+    this pytest process has them running already, so the failure cannot show here.
+    """
+    import subprocess
+    import sys
+
+    path, expected_hits, _ = write_synthetic_file(tmp_path / "synthetic.evio")
+    script = tmp_path / "captured_stderr.py"
+    script.write_text(
+        "import io, sys\n"
+        "from pyevio import stream_stats\n"
+        "class Capture(io.TextIOBase):\n"
+        "    def write(self, s): return len(s)\n"
+        "    def fileno(self): return -1\n"
+        "if __name__ == '__main__':\n"
+        "    sys.stderr = Capture()\n"
+        f"    print(stream_stats.compute_stream_stats({str(path)!r}, workers=2).n_hits)\n"
+    )
+    result = subprocess.run([sys.executable, str(script)], capture_output=True, text=True, timeout=120)
+    assert result.returncode == 0 and result.stdout.strip() == str(expected_hits), result.stdout + result.stderr
