@@ -14,6 +14,8 @@ A Python library and command-line tool for reading and inspecting EVIO (Event In
 - Decoding CODA streaming fADC250 time frames into hit arrays and computing histograms and file checks over a whole file in one parallel pass
 - Browsing a file — checks, plots, record table, structure tree — in a browser (`pyevio web`, [docs/web_viewer.md](docs/web_viewer.md)) or in the terminal over SSH (`pyevio gui`, [docs/console_gui.md](docs/console_gui.md)); the two share one statistics cache
 
+The repository also holds [`rust/`](rust/README.md), a cargo workspace with `evio-stream`, a streaming read-only EVIO v6 reader in Rust that passes the same golden and SRO rulers (about 3 s for every hit of a 15.5 GB raw file on one thread), its `evio-count` and `evio-dump` tools, and `evio-tui`, a minimal terminal viewer. It is independent of the Python package.
+
 ## What pyevio reads
 
 | file | how it is read |
