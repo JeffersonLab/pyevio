@@ -1,0 +1,9 @@
+[workspace]
+resolver = "2"
+members = ["evio-stream", "evio-tui"]
+
+# Cargo reads profiles from the workspace root only (a member's profile is
+# ignored with a warning), so evio-stream's release profile lives here.
+[profile.release]
+# Line tables for `perf`; no effect on speed.
+debug = 1

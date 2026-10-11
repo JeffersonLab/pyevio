@@ -1,0 +1,14 @@
+[package]
+name = "evio-tui"
+version = "0.1.0"
+edition = "2021"
+description = "Minimal terminal viewer for EVIO v6 files and JLab SRO streams"
+license = "MIT"
+publish = false
+
+[dependencies]
+evio-stream = { path = "../evio-stream" }
+# Terminal drawing (widgets, buffers, the test backend).
+ratatui = "0.30"
+# Raw mode, the alternate screen and key events.
+crossterm = "0.29"
