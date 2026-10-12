@@ -187,7 +187,7 @@ EVIO_CORPUS=1 cargo test --release --test corpus -- --nocapture   # 140 GB, minu
 ```
 
 - Golden set (`tests/golden.rs`, `tests/data/golden_manifest.tsv` generated
-  from the evio-optim `manifest.yaml`): all 46 rows pass. 39 readable rows
+  from the evio-optim `manifest.yaml`): all 44 rows pass. 37 readable rows
   (C++ and Java writers: plain LE/BE, LZ4, LZ4_BEST, gzip, dictionary, first
   event, odd user header, trailer with and without index, append, split,
   many records, 12-deep nesting, one 40 MB event, zero events, HIPO file
