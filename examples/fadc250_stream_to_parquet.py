@@ -1,7 +1,7 @@
 """Decode CODA streaming fADC250 hits from an EVIO v6 file into Parquet.
 
 Container access goes through pyevio. The hit words are decoded with numpy.
-Requires pyarrow (pip install pyarrow). Browse the same files with `pyevio web`.
+Requires pyarrow (pip install pyarrow). Browse the same files with `pyevio gui`.
 
 Hit word layout (big-endian u32):
   bits 30-17 time in 4 ns ticks from frame start

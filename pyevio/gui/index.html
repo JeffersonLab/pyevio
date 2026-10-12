@@ -133,7 +133,7 @@ details summary { cursor: pointer; color: var(--fg2); font-size: 13px; }
     <label class="btn" for="fileIn" tabindex="0" id="openLbl">Open .evio file</label>
     <input type="file" id="fileIn" accept=".evio,.dat,*/*" hidden>
   </div>
-  <div class="drop">Drop an <code>.evio</code> file anywhere on this page. It is decoded in your browser and never uploaded. EVIO v6 with CODA streaming fADC250 data (0xFF60 time frames) gets full plots; any other EVIO v6 file shows the structure tree.</div>
+  <div class="drop">Drop an <code>.evio</code> file anywhere on this page. It is decoded in your browser and never uploaded. EVIO v6 with CODA streaming fADC250 data (0xFF60 time frames) gets full plots; any other EVIO v6 file shows the structure tree. File-based EVIO is untested; start with <code>pyevio gui --mode=file</code> to skip the streaming decode and go straight to the structure tree.</div>
   <section class="browser" id="browser" hidden aria-label="Folder browser">
     <div class="bh">
       <button class="btn ghost" id="brUp" type="button" aria-label="Parent folder">↑ Up</button>
@@ -146,7 +146,7 @@ details summary { cursor: pointer; color: var(--fg2); font-size: 13px; }
   <section class="status" aria-live="polite">
     <div class="file" id="stFile">No file selected</div>
     <div class="prog" id="prog" hidden><i></i></div>
-    <div class="msg" id="stMsg">Click <b>Open .evio file</b> or drag a file onto this page. When started with <code>pyevio web</code>, you can also pick a file from any folder with <b>Browse folders</b>.</div>
+    <div class="msg" id="stMsg">Click <b>Open .evio file</b> or drag a file onto this page. When started with <code>pyevio gui</code>, you can also pick a file from any folder with <b>Browse folders</b>.</div>
   </section>
 
   <div id="app" hidden style="display:grid;gap:16px">
@@ -221,6 +221,9 @@ function showTip(e, html) { tip.innerHTML = html; tip.hidden = false; const r = 
 const hideTip = () => tip.hidden = true;
 const SER = ['var(--s1)', 'var(--s2)', 'var(--s3)'];
 const MAGIC = 0xc0da0100;
+// 'stream' decodes CODA streaming fADC250 data (0xFF60 time frames, tested); 'file' skips that
+// decoding and only builds the structure tree, since file-based EVIO is not tested yet.
+let EVIO_MODE = 'stream';
 
 // =============== EVIO v6 reader ===============
 // Scans records to EOF (ignores the "last record" bit), uses the event index when present, else walks events by bank length.
@@ -267,6 +270,7 @@ async function analyze(buf, onProgress) {
 // CODA streaming event: 0xFF60 { 0xFF31 {seg 0x32: frame, ts}, ROC bank { 0xFF30 {...}, payload bank per port { hit words } } ... }
 function decodeEvent(u, p, S) {
   const evEnd = p + u(p) + 1;
+  if (EVIO_MODE === 'file') { S.nOther++; return; }
   if ((u(p + 1) >>> 16) !== 0xff60) { S.nOther++; return; }
   let q = p + 2;
   if ((u(q + 1) >>> 16) !== 0xff31 || (u(q + 2) >>> 24) !== 0x32) { S.nOther++; return; }
@@ -648,7 +652,7 @@ addEventListener('dragover', e => { e.preventDefault(); document.body.classList.
 addEventListener('dragleave', e => { if (!e.relatedTarget) document.body.classList.remove('dragging'); });
 addEventListener('drop', e => { e.preventDefault(); document.body.classList.remove('dragging'); const f = e.dataTransfer.files[0]; if (f) loadFile(f); });
 
-// Folder browser (only when served by `pyevio web`, which provides /api/*)
+// Folder browser (only when served by `pyevio gui`, which provides /api/*)
 let brDir = '';
 const sizeStr = n => n >= 1e9 ? (n / 1e9).toFixed(2) + ' GB' : n >= 1e6 ? (n / 1e6).toFixed(1) + ' MB' : n >= 1e3 ? (n / 1e3).toFixed(0) + ' kB' : n + ' B';
 function showBrowser(on) { $('browser').hidden = !on; $('browseBtn').setAttribute('aria-expanded', on); }
@@ -668,7 +672,7 @@ async function browse(dir) {
     j.dirs.forEach(d => item('dir', 'DIR', d + '/', '', () => browse(j.dir.replace(/\/+$/, '') + '/' + d)));
     j.files.forEach(f => item('file', 'EVIO', f.name, sizeStr(f.size), () => loadPath(j.dir.replace(/\/+$/, '') + '/' + f.name, f.name, f.size)));
     if (!j.dirs.length && !j.files.length) { const m = document.createElement('div'); m.className = 'bempty'; m.textContent = $('brAll').checked ? 'This folder is empty.' : 'No .evio files or folders here. Tick “all files” to see everything.'; list.appendChild(m); }
-  } catch (e) { list.innerHTML = '<div class="bempty">The server did not answer. Is <code>pyevio web</code> still running?</div>'; }
+  } catch (e) { list.innerHTML = '<div class="bempty">The server did not answer. Is <code>pyevio gui</code> still running?</div>'; }
 }
 async function loadPath(path, name, size) {
   $('stFile').textContent = name; $('stMsg').className = 'msg'; $('stMsg').textContent = `Reading ${sizeStr(size)} from ${path}…`;
@@ -683,7 +687,7 @@ $('brPath').addEventListener('keydown', e => { if (e.key === 'Enter') browse($('
 $('brAll').addEventListener('change', () => browse(brDir));
 (async () => {
   let start = null;
-  try { const r = await fetch('api/start', { cache: 'no-store' }); if (r.ok) start = (await r.json()).dir; } catch (e) {}
+  try { const r = await fetch('api/start', { cache: 'no-store' }); if (r.ok) { const j = await r.json(); start = j.dir; if (j.mode) EVIO_MODE = j.mode; } } catch (e) {}
   if (!start) return;                       // opened as a plain file: only Open / drag-and-drop
   $('browseBtn').hidden = false;
   brDir = start; showBrowser(true); browse(start);

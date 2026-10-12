@@ -2,7 +2,7 @@
 
 The viewer decodes files in the browser. The server only lists folders and
 streams file bytes, and listens on 127.0.0.1. To view files on a remote machine,
-run `pyevio web --no-browser` there and connect with
+run `pyevio gui --no-browser` there and connect with
 `ssh -L 8765:localhost:8765 user@host`.
 """
 import functools
@@ -20,12 +20,13 @@ EVIO_SUFFIXES = {".evio", ".dat"}
 
 class Handler(http.server.SimpleHTTPRequestHandler):
     start_dir = str(Path.cwd())
+    mode = "stream"
 
     def do_GET(self):
         url = urlparse(self.path)
         q = {k: v[0] for k, v in parse_qs(url.query).items()}
         if url.path == "/api/start":
-            return self._json({"dir": self.start_dir})
+            return self._json({"dir": self.start_dir, "mode": self.mode})
         if url.path == "/api/ls":
             return self._ls(q.get("dir", self.start_dir), q.get("all") == "1")
         if url.path == "/api/file":
@@ -83,13 +84,18 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             super().log_message(fmt, *args)
 
 
-def serve(start_dir=".", port=8765, open_browser=True):
-    """Serve the viewer at http://localhost:<port> until Ctrl+C."""
+def serve(start_dir=".", port=8765, open_browser=True, mode="stream"):
+    """Serve the viewer at http://localhost:<port> until Ctrl+C.
+
+    mode: 'stream' decodes CODA streaming fADC250 data (tested); 'file' skips
+    that decoding and only shows the structure tree, for untested file-based EVIO.
+    """
     Handler.start_dir = str(Path(os.path.expanduser(start_dir)).resolve())
+    Handler.mode = mode
     handler = functools.partial(Handler, directory=str(HERE))
     with http.server.ThreadingHTTPServer(("127.0.0.1", port), handler) as httpd:
         url = f"http://localhost:{port}/index.html"
-        print(f"Viewer: {url}   (Ctrl+C to stop)\nFile browser starts in: {Handler.start_dir}")
+        print(f"Viewer: {url}   (Ctrl+C to stop)\nFile browser starts in: {Handler.start_dir}, mode: {mode}")
         if open_browser:
             webbrowser.open(url)
         try:

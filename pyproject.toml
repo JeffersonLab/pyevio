@@ -31,4 +31,4 @@ version = {attr = "pyevio.__version__"}
 pyevio = "pyevio.cli:main"
 
 [tool.setuptools.package-data]
-pyevio = ["web/*.html"]
+pyevio = ["gui/*.html"]

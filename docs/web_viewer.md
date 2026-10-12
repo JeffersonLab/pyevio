@@ -1,22 +1,23 @@
-# Web viewer
+# GUI viewer
 
-`pyevio web` opens a page for browsing an EVIO v6 file: file checks, channel occupancy, rate, charge and timing plots, and a clickable structure tree from the file header down to single fADC hit words. Decoding runs in the browser, and the file is never uploaded.
+`pyevio gui` opens a page for browsing an EVIO v6 file: file checks, channel occupancy, rate, charge and timing plots, and a clickable structure tree from the file header down to single fADC hit words. Decoding runs in the browser, and the file is never uploaded.
 
-Plots are written for CODA streaming fADC250 files (0xFF60 built time frames). Any other EVIO v6 file shows the structure tree only.
+Plots are written for CODA streaming fADC250 files (0xFF60 built time frames); this is the only EVIO flavor tested so far. File-based (triggered) EVIO uses a different decoding method that hasn't been validated here and may hit hiccups on large or unexpected layouts — pass `--mode=file` to skip the streaming-specific decode and show the structure tree only.
 
 ## Start it
 
 ```bash
-pyevio web                       # file browser starts in the current folder
-pyevio web /path/to/runs         # or in another folder
-pyevio web --port 9000 --no-browser
+pyevio gui                       # file browser starts in the current folder
+pyevio gui /path/to/runs         # or in another folder
+pyevio gui --port 9000 --no-browser
+pyevio gui /path/to/runs --mode=file   # file-based EVIO: structure tree only (experimental)
 ```
 
 Pick a file with **Browse folders**, **Open .evio file**, or by dragging it onto the page. A 93 MB file loads in under a second. The whole file is held in browser memory, so multi-GB files may not fit.
 
-The page also works without the server: open `pyevio/web/index.html` directly. Only the folder browser needs `pyevio web`.
+The page also works without the server: open `pyevio/gui/index.html` directly. Only the folder browser needs `pyevio gui`.
 
-**Files on a remote machine** (e.g. a farm node): run `pyevio web /path/to/runs --no-browser` there, connect with `ssh -L 8765:localhost:8765 user@host`, and open http://localhost:8765 locally. The server listens on localhost only.
+**Files on a remote machine** (e.g. a farm node): run `pyevio gui /path/to/runs --no-browser` there, connect with `ssh -L 8765:localhost:8765 user@host`, and open http://localhost:8765 locally. The server listens on localhost only.
 
 ## What it shows
 

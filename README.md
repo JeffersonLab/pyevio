@@ -128,16 +128,19 @@ pyevio hex sample.evio 0x100 --bytes --endian='>'
 pyevio ui sample.evio
 ```
 
-### Web Viewer
+### GUI Viewer
 
 ```bash
 # Serve the viewer at http://localhost:8765, file browser starts in /path/to/runs
-pyevio web /path/to/runs
+pyevio gui /path/to/runs
+
+# File-based EVIO is experimental: skip the streaming decode, show structure tree only
+pyevio gui /path/to/runs --mode=file
 ```
 
-Browse a file in the browser: file checks, channel occupancy, rate, charge and timing plots for CODA streaming fADC250 data, and a structure tree down to single hit words. Decoding runs in the browser. See [docs/web_viewer.md](docs/web_viewer.md).
+Browse a file in the browser: file checks, channel occupancy, rate, charge and timing plots for CODA streaming fADC250 data, and a structure tree down to single hit words. Decoding runs in the browser. Only CODA streaming fADC250 EVIO is tested; file-based EVIO may not decode well yet. See [docs/web_viewer.md](docs/web_viewer.md).
 
-![Web viewer overview](docs/images/web_viewer_overview.png)
+![GUI viewer overview](docs/images/web_viewer_overview.png)
 
 ## Understanding EVIO File Structure
 
