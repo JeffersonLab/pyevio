@@ -91,7 +91,7 @@ def file_checks(evio_file: EvioFile, records: dict, stats: StreamStats) -> list:
         row("flag words", "warn" if stats.n_flag_words else "ok", stats.n_flag_words, "hit words with bit 31 set"),
         row("unmapped payload banks", "warn" if stats.n_unmapped_payload_banks else "ok", stats.n_unmapped_payload_banks,
             "ports absent from the 0x41 payload map, decoded as fADC250"),
-        # F15: the SRO hardware fills every AIS slot with one stream's entry. The decoder never uses the AIS
+        # The SRO hardware fills every AIS slot with one stream's entry. The decoder never uses the AIS
         # to find ROC banks, so the repetition costs nothing; the row makes it visible.
         row("AIS entries identical", "info" if stats.frames_with_degenerate_ais else "ok", stats.frames_with_degenerate_ais,
             f"of {stats.frames_with_ais} frames with an aggregation info segment: the segment repeats one stream's entry "

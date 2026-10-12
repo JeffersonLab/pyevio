@@ -146,7 +146,7 @@ def test_decode_frame_columns(endian):
     assert (frame.n_ais_entries, frame.n_ais_distinct) == (24, 1)
 
 
-# ---------------------------------------------------------------- AIS segment (F15)
+# ---------------------------------------------------------------- AIS segment
 @pytest.mark.parametrize("endian", ["<", ">"])
 def test_ais_entries_are_counted_identical_and_distinct(endian):
     """The decoder counts the AIS entries and their distinct values per frame; it never walks the AIS for ROC banks."""
@@ -224,8 +224,8 @@ def test_non_stream_event_is_not_an_error():
     assert frame.n_hits == 0 and frame.errors == 0
 
 
-def test_last_roc_bank_without_children_i17():
-    """F17: the Parquet example crashed on a frame whose last ROC bank has no children (length 1)."""
+def test_last_roc_bank_without_children():
+    """The Parquet example crashed on a frame whose last ROC bank has no children (length 1)."""
     words = stream_frame(FRAME_NUMBER, TIMESTAMP, [
         roc_bank(7, 1, FRAME_NUMBER, TIMESTAMP, [(1, HITS_A)]),
         bank(7, 0x10, 0x22, []),
@@ -404,7 +404,7 @@ def independent_payload_word_sums(mm, offset, length, endian):
     return sums
 
 
-# Module per crate in run 791 as the PHASE0 reference report records it (independent of the decoder's map parsing).
+# Module per crate in run 791, determined independently of the decoder's map parsing.
 REFERENCE_FADC_ROCIDS = {7, 9, 25, 27, 29, 84}
 REFERENCE_DCRB_ROCIDS = {44, 45, 46, 53, 54, 55}
 
@@ -451,5 +451,5 @@ def test_corpus_record0_hits_match_payload_word_sums():
     assert fs.non_fadc_words_per_port(hits.non_fadc_banks) == {k: v for k, v in expected_dcrb_per_port.items() if v}
     assert hits.non_fadc_words == sum(expected_dcrb_per_port.values()) == 400_546
     assert hits.n_hits + hits.non_fadc_words == hits.n_payload_words == 499_660
-    # F15: every AIS lists 24 slots holding one value (one stream's entry repeated).
+    # Every AIS lists 24 slots holding one value (one stream's entry repeated).
     assert hits.frames["n_ais_entries"].tolist() == [24] * 11 and hits.frames["n_ais_distinct"].tolist() == [1] * 11

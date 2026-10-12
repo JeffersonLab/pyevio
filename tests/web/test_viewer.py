@@ -1,4 +1,4 @@
-"""Headless-browser smoke tests of the viewer, one per tab (F36).
+"""Headless-browser smoke tests of the viewer, one per tab.
 
 The FastAPI app runs in a uvicorn thread on a free port; Playwright drives Chromium against it. Each test
 asserts that the tab renders what the API returns: tile values equal /summary, charts hold a path, the records
@@ -196,7 +196,7 @@ def test_golden_file_shows_na_and_empty_plots(page, served_root):
 
 
 def test_failed_open_is_reported(page, served_root):
-    """F29: a file the server cannot read shows its error; the tabs stay disabled."""
+    """A file the server cannot read shows its error; the tabs stay disabled."""
     (served_root["root"] / "runs" / "garbage.evio").write_bytes(b"\0" * 64)
     page.click(".bitem.dir:has-text('runs')")
     page.click(".bitem.file:has-text('garbage.evio')")
@@ -207,7 +207,7 @@ def test_failed_open_is_reported(page, served_root):
 
 
 def test_second_open_replaces_the_first(page, served_root):
-    """F27: the page shows the file opened last; the earlier file's content is gone."""
+    """The page shows the file opened last; the earlier file's content is gone."""
     first = open_in_viewer(page, served_root["synthetic"])
     if not served_root["golden"]:
         pytest.skip("golden set absent")

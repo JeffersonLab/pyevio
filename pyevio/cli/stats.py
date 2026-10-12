@@ -35,7 +35,7 @@ def print_stats_summary(console, stats):
         totals.add_row("Hit rate", f"{stats.n_hits / stats.live_time_s / 1e6:,.2f} MHz of live time (fADC250)")
     totals.add_row("Decode errors", f"{stats.errors:,}" + (f" — first: {stats.error_messages[0]}" if stats.error_messages else ""))
     totals.add_row("Decode warnings", f"{stats.warnings:,}" + (f" — first: {stats.warning_messages[0]}" if stats.warning_messages else ""))
-    # F15: the SRO hardware fills every AIS slot with one stream's entry; the same check the viewer shows.
+    # The SRO hardware fills every AIS slot with one stream's entry; the same check the viewer shows.
     totals.add_row("AIS", f"{stats.frames_with_ais:,} frames with an aggregation info segment, "
                           f"{stats.frames_with_degenerate_ais:,} repeat one entry in every slot")
     totals.add_row("Wall time", f"{stats.wall_seconds:.1f} s with {stats.workers} workers for "

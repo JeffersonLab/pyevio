@@ -171,7 +171,7 @@ def row_lines(text: str, labels: list) -> dict:
 
 
 def test_heatmap_prints_every_count_once_and_intact():
-    """F64: 16 ports in 16 lines, counts whose compact forms overstruck each other under plotext (93.6k under 55k read 955kk)."""
+    """16 ports in 16 lines, counts whose compact forms overstruck each other under plotext (93.6k under 55k read 955kk)."""
     ports = list(range(1, 17))
     counts = [[(port * 16 + channel) * 613 + (0 if (port + channel) % 7 else -(port * 16 + channel) * 613)
                for channel in range(16)] for port in ports]
@@ -191,7 +191,7 @@ def test_heatmap_prints_every_count_once_and_intact():
 
 
 def test_heatmap_rows_and_columns_are_all_the_same_size():
-    """F65: 13 rows at the screenshot size and at a taller one; the dash of an unmapped port is always printed."""
+    """13 rows at the screenshot size and at a taller one; the dash of an unmapped port is always printed."""
     ports = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]
     counts = [[(port * 16 + channel) * 1000 for channel in range(16)] for port in ports]
     hist = occupancy_dict(counts, ports, dead_ports=(4, 11))
@@ -243,7 +243,7 @@ def charge_render(hist: dict, width: int, height: int) -> str:
 
 
 def test_charge_spectrum_is_logarithmic_with_power_of_ten_ticks():
-    """F68: the terminal charge plot reads like the browser's: log y, ticks labelled with the real counts."""
+    """The terminal charge plot reads like the browser's: log y, ticks labelled with the real counts."""
     edges = list(range(0, 8193, 64))
     counts = [0] * 128
     counts[0], counts[1], counts[2], counts[10], counts[20], counts[40] = 20_000_000, 2_000_000, 50_000, 300, 7, 1

@@ -1,4 +1,4 @@
-"""SRO hardware stream layout: 8-word block headers, no file header, truncated tail (F2, F6, D4).
+"""SRO hardware stream layout: 8-word block headers, no file header, truncated tail.
 
 The JLab SRO writers produce EVIO v6 streaming content in EVIO4-style block
 containers: block header ``{length, block number, 8, event count, 0, 4, 0,
@@ -93,7 +93,7 @@ def test_sro_file_reads_as_8word_records(tmp_path):
 
 
 def test_sro_truncated_tail_keeps_complete_events(tmp_path):
-    """A final block cut mid-event keeps its complete events; checks reports the bytes (D4)."""
+    """A final block cut mid-event keeps its complete events; checks reports the bytes."""
     blocks = [sro_block(1, EVENTS_A), sro_block(2, EVENTS_B), sro_block(3, EVENTS_C)]
     cut = len(EVENTS_C[2]) * 4 - 8  # the third event loses all but its first two words
     with EvioFile(write_sro_file(tmp_path / "sro_tail.evio", blocks, drop_tail_bytes=cut)) as f:
@@ -170,7 +170,7 @@ def test_info_command_prints_layout_checks_and_counts(tmp_path):
 
 
 def test_garbage_between_blocks_ends_the_scan(tmp_path):
-    """Bytes without the magic word end the scan with a check (F6)."""
+    """Bytes without the magic word end the scan with a check."""
     blocks = [sro_block(1, EVENTS_A), b"\xee" * 64, sro_block(2, EVENTS_B)]
     with EvioFile(write_sro_file(tmp_path / "sro_garbage.evio", blocks)) as f:
         assert f.record_count == 1
@@ -179,7 +179,7 @@ def test_garbage_between_blocks_ends_the_scan(tmp_path):
 
 
 def test_second_file_header_ends_the_scan(tmp_path):
-    """Two v6 files concatenated: the second file header is no record (F6)."""
+    """Two v6 files concatenated: the second file header is no record."""
     event = struct.pack("<4I", 3, 0xFF601000, 1, 2)
     record = struct.pack("<14I", 14 + 1 + 4, 1, 14, 1, 4, 6, 0, MAGIC, 16, 0, 0, 0, 0, 0) + struct.pack("<I", 16) + event
     file_header = struct.pack("<14I", 0x4556494F, 1, 14, 1, 0, 6, 0, MAGIC, 0, 0, 0, 0, 0, 0)
@@ -197,7 +197,7 @@ def test_second_file_header_ends_the_scan(tmp_path):
     ([sro_block(1, EVENTS_A), sro_block(2, EVENTS_B, version_word=2)], 2),
 ], ids=["v4-last-block-bit", "v4-dictionary-bit", "v3", "v2-later-block"])
 def test_other_bare_block_chains_are_refused(tmp_path, blocks, version):
-    """Only the SRO shape is read; any bit-info bit or other version anywhere in the chain is the F9 error (D17)."""
+    """Only the SRO shape is read; any bit-info bit or other version anywhere in the chain raises the unsupported-version error."""
     with pytest.raises(ValueError, match=rf"version {version}") as raised:
         EvioFile(write_sro_file(tmp_path / "other.evio", blocks))
     assert "evio" in str(raised.value).lower()

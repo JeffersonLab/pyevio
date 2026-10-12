@@ -7,8 +7,7 @@ access stays in pyevio core: :func:`event_words` slices one event out of a
 memory map, and the CLI, the examples and the web server call this module.
 
 Frame layout, measured on /data/evio-lib/corpus/sro_000791.evio.00000.v6
-(record 0), described in the evio-optim SRO notes and in the PHASE0 SRO
-reference report (space/reports/phase0_sro_reference.md)::
+(record 0)::
 
     event bank          tag 0xFF60, type 0x10 (bank of banks), num 0
       SIB               tag 0xFF31, type 0x20 (bank of segments)
@@ -54,8 +53,9 @@ Hit word layout (one ``uint32`` per hit), the single copy for pyevio.
 Evidence: every earlier decoder in this repository, the viewer and the
 independent greenfield SRO parser agree on the bit positions and on the
 4 ns tick, the fADC250 sample period (250 MSPS). 2^14 ticks × 4 ns =
-65,536 ns equals the 65,536-tick timestamp step per frame in the SRO notes
-only if the timestamp tick is 1 ns, which is open (question Q2)::
+65,536 ns equals the 65,536-tick timestamp step per frame only if the
+timestamp tick is 1 ns. The tick length is unconfirmed, so ``stream_stats``
+keeps it as the ``tick_ns`` knob::
 
     bit  31      flag, never set in the SRO data (Jon Zarling's decoder skips such words)
     bits 30—17   time in 4 ns ticks from the frame start (14 bits, 0—16383)

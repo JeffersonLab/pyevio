@@ -1,8 +1,8 @@
 """Raw SRO smoke: a JLab hardware file (8-word record headers, truncated tail) opens through the API.
 
-Runs with ``PYEVIO_SRO=1`` or ``PYEVIO_CORPUS=1``. Reference numbers: PHASE0 SRO
-reference and PHASE1 (space/reports): 7,893 records of which the last is
-truncated, 86,794 events (2 salvaged from the tail), 764,009,774 fADC250 hits.
+Runs with ``PYEVIO_SRO=1`` or ``PYEVIO_CORPUS=1``. Reference numbers, measured
+independently of pyevio: 7,893 records of which the last is truncated, 86,794
+events (2 salvaged from the tail), 764,009,774 fADC250 hits.
 """
 import os
 import time

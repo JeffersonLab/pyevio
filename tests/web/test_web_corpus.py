@@ -15,7 +15,7 @@ from pyevio.web.app import create_app
 pytestmark = [pytest.mark.slow,
               pytest.mark.skipif(os.environ.get("PYEVIO_CORPUS") != "1", reason="set PYEVIO_CORPUS=1 to run on the SRO corpus")]
 
-PHASE2_FRAMES = 86_794  # frames in sro_000791.evio.00000.v6 (space/reports/phase2 report)
+REFERENCE_FRAMES = 86_794  # frames in sro_000791.evio.00000.v6, counted independently of pyevio
 
 
 def test_corpus_open_progress_cache(tmp_path):
@@ -45,7 +45,7 @@ def test_corpus_open_progress_cache(tmp_path):
     print(f"\ncorpus open-to-done: {open_to_done_s:.1f} s, records {progress['records_total']}")
 
     summary = client.get(f"/api/files/{opened['file_id']}/summary").json()
-    assert summary["totals"]["n_frames"] == PHASE2_FRAMES and summary["frames"]["stride"] == 4
+    assert summary["totals"]["n_frames"] == REFERENCE_FRAMES and summary["frames"]["stride"] == 4
     assert summary["totals"]["n_hits"] > 0 and summary["records"]["count"] == progress["records_total"]
     rows = client.get(f"/api/files/{opened['file_id']}/records", params={"from": 7880, "count": 100}).json()
     assert rows["total"] == summary["records"]["count"] + 1 and rows["rows"][-1]["is_trailer"]

@@ -34,14 +34,14 @@ What one test checks
    ``"v6-records"`` and checked like the v6 rows (the dictionary in the
    record user header of ``buffer_evw_dict_le.dump`` is skipped, not read).
 3. v4 and v1—3 rows: ``EvioFile`` raises ``ValueError`` whose message names
-   the detected version and points at the evio tools (the F9 contract, see
+   the detected version and points at the evio tools (see
    ``assert_unsupported_version_message``).
 4. v6 rows: the header event-count sum equals the manifest count, the
    events found by ``Record.scan_events`` number the same, and no event
    extends past the end of the file.
 
-Rows that fail today carry ``xfail(strict=True)`` with the finding number
-from the findings ledger, so a fix flips the test loudly.
+Rows that fail today carry ``xfail(strict=True)`` with the reason, so a fix
+flips the test loudly.
 """
 
 import hashlib
@@ -72,7 +72,7 @@ if not os.path.isdir(GOLDEN_ROOT):
 
 
 # EVIO version each legacy row carries in word 5 of its first block header.
-# These rows must fail with the F9 message instead of being read.
+# These rows must fail with the unsupported-version message instead of being read.
 LEGACY_VERSION = {
     "v4_le.evio": 4,
     "v4_be.evio": 4,
@@ -80,10 +80,8 @@ LEGACY_VERSION = {
     "v13_legacy.evio": 3,
 }
 
-# Failures by case name, decided by running every row with pyevio. Empty
-# since PHASE1 fixed F3 (trailer index read as events), F4 (compressed
-# records), F9 (version message for legacy files) and F39 (HIPO file type
-# id). A new entry carries the finding number.
+# Failures by case name, decided by running every row with pyevio. Empty:
+# every row passes. A new entry maps the case name to the reason the row fails.
 XFAIL_BY_CASE = {}
 
 
@@ -107,7 +105,7 @@ def sha256_of(path):
 
 
 def assert_unsupported_version_message(message, version):
-    """The F9 contract for files pyevio does not read.
+    """The message contract for files pyevio does not read.
 
     The message names the detected EVIO version ("version 4") and tells the
     reader where to go: an evio tool (evio2xml, eviocopy) or the evio

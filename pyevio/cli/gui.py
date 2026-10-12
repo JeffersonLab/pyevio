@@ -25,7 +25,7 @@ def gui_command(path, cache_dir, workers):
     from pyevio.gui.session import Session
     from pyevio.stream_stats import start_worker_services
 
-    start_worker_services()  # before Textual captures stderr: the resource tracker needs a real one to start (F63)
+    start_worker_services()  # before Textual captures stderr: the resource tracker needs a real one to start
     target = Path(path)
     session = Session(cache_dir=Path(cache_dir) if cache_dir else None, workers=workers)
     app = PyEvioGui(session, start_path=target if target.is_file() else None, start_dir=target if target.is_dir() else target.parent)

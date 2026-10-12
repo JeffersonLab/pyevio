@@ -1,4 +1,4 @@
-"""Token, Host and path confinement (F1): the bad cases are rejected, the good ones pass."""
+"""Token, Host and path confinement: the bad cases are rejected, the good ones pass."""
 from fastapi.testclient import TestClient
 
 from conftest import TOKEN

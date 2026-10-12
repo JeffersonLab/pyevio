@@ -68,7 +68,7 @@ def test_synthetic_file_totals_and_checks(tmp_path, workers):
     path, expected_hits, frame_numbers = write_synthetic_file(tmp_path / "synthetic.evio")
     stats = stream_stats.compute_stream_stats(path, workers=workers, rate_bins=8, chunk_records=1)
 
-    # n_records counts data records (EvioFile.record_count, D12); the trailer is reported apart.
+    # n_records counts data records (EvioFile.record_count); the trailer is reported apart.
     assert stats.n_records == 3 and stats.n_trailer_records == 1
     assert stats.n_events == 13 and stats.n_frames == 12 and stats.n_other_events == 1
     assert stats.n_hits == expected_hits
@@ -102,7 +102,7 @@ def test_synthetic_file_totals_and_checks(tmp_path, workers):
     assert checks.first_frame == 1000 and checks.last_frame == max(frame_numbers)
     assert stats.frames["frame"].tolist() == frame_numbers
     assert stats.frames["n_hits"].tolist()[:2] == [17, 18]
-    # F15: every frame's AIS repeats one entry in its 24 slots
+    # Every frame's AIS repeats one entry in its 24 slots
     assert stats.frames_with_ais == stats.frames_with_degenerate_ais == 12
     assert stats.frames["n_ais_entries"].tolist() == [24] * 12 and stats.frames["n_ais_distinct"].tolist() == [1] * 12
 
@@ -151,7 +151,7 @@ def test_stats_command_prints_summary(tmp_path):
     assert result.exit_code == 0, result.output
     assert f"{expected_hits:,}" in result.output and "stride 4" in result.output and "1 missing" in result.output
     assert "DCRB" in result.output and out.exists()
-    # F15 / F61: the CLI prints the same AIS check and warning count the viewer shows
+    # The CLI prints the same AIS check and warning count the viewer shows
     flat = " ".join(result.output.split())  # rich wraps the table at 80 columns under CliRunner
     assert "12 frames with an aggregation info segment, 12 repeat one entry in every slot" in flat
     assert "Decode warnings 0" in flat
@@ -183,7 +183,7 @@ def test_corpus_first_200_records_match_decoder():
     assert stats.checks.frame_period_ticks == 65536
     assert int(stats.rate_counts.sum()) == decoded.n_hits and int(stats.occupancy.sum()) == decoded.n_hits
     assert stats.errors == stats.warnings == 0 and stats.n_trailer_records == 0
-    # F15: every frame of the run carries a 24-slot AIS holding one value
+    # Every frame of the run carries a 24-slot AIS holding one value
     assert stats.frames_with_ais == stats.frames_with_degenerate_ais == 2200
     assert int(fs.ais_degenerate_mask(decoded.frames).sum()) == 2200
     assert np.unique(decoded.frames["n_ais_entries"]).tolist() == [24] and np.unique(decoded.frames["n_ais_distinct"]).tolist() == [1]
@@ -194,7 +194,7 @@ def test_corpus_first_200_records_match_decoder():
 
 
 def test_pool_starts_under_a_captured_stderr(tmp_path):
-    """F63: Textual replaces sys.stderr with an object whose fileno() is -1; the resource tracker's spawn then failed.
+    """Textual replaces sys.stderr with an object whose fileno() is -1; the resource tracker's spawn then failed.
 
     Runs in a fresh interpreter because the tracker and the forkserver start once per process:
     this pytest process has them running already, so the failure cannot show here.

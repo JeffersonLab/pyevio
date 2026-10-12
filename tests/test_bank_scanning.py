@@ -277,7 +277,7 @@ class TestBankScanning:
             assert all(c.tag != 0x000F for c in children + roc_children)
 
     def test_sro_event_segments_are_one_word_structures(self):
-        """The SIB of an SRO stream frame holds segments (1-word headers), typed by the parent (F45).
+        """The SIB of an SRO stream frame holds segments (1-word headers), typed by the parent.
 
         Layout as the hardware writes it: event 0xFF60 (bank of banks) ->
         SIB 0xFF31 (bank of segments: TSS 0x32 with frame, ts_lo, ts_hi; AIS
@@ -346,7 +346,7 @@ class TestBankScanning:
         assert len(bank.errors) == 1 and "Segment at 0x10 declares 500 words" in bank.errors[0]
 
     def test_bank_clamped_to_limit(self):
-        """A bank whose length passes the given limit is clamped there and says so (F5)."""
+        """A bank whose length passes the given limit is clamped there and says so."""
         bank_bytes = evio_bank(0x0101, Bank.TYPE_UINT32, 0x01, struct.pack("<III", 1, 2, 3))
         bank = Bank(MockMemoryMap(bank_bytes), 0, '<', limit=16)
         assert bank.length == 4

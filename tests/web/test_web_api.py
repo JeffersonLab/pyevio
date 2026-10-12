@@ -1,4 +1,4 @@
-"""The file API on the synthetic stream file and a golden file: numbers equal stream_stats called directly (F21—F23)."""
+"""The file API on the synthetic stream file and a golden file: numbers equal stream_stats called directly."""
 import threading
 import time
 
@@ -35,7 +35,7 @@ def test_open_progress_summary_match_direct_stats(client, served_root):
     assert checks["missing frames"]["status"] == "warn" and checks["decode errors"]["status"] == "ok"
     assert checks["decode warnings"] == {"name": "decode warnings", "status": "ok", "value": 0, "detail": ""}
     assert totals["warnings"] == 0
-    # F15: every synthetic frame's AIS repeats one entry, as the SRO hardware writes it
+    # Every synthetic frame's AIS repeats one entry, as the SRO hardware writes it
     assert totals["frames_with_ais"] == totals["frames_with_degenerate_ais"] == 12
     assert checks["AIS entries identical"]["status"] == "info" and checks["AIS entries identical"]["value"] == 12
     assert "repeats one stream's entry in every slot" in checks["AIS entries identical"]["detail"]
@@ -43,7 +43,7 @@ def test_open_progress_summary_match_direct_stats(client, served_root):
 
 
 def test_distinct_ais_entries_pass_the_check(client, served_root):
-    """F15: a file whose AIS lists 24 distinct streams gets an ok row with no detail."""
+    """A file whose AIS lists 24 distinct streams gets an ok row with no detail."""
     from test_stream_stats import write_synthetic_file
     write_synthetic_file(served_root["root"] / "runs" / "distinct_ais.evio", distinct_ais=True)
     file_id, _ = open_and_wait(client, "runs/distinct_ais.evio")
@@ -116,7 +116,7 @@ def test_structure_walk_to_hits(client, served_root):
     assert hits["children"][1]["t_ns"] == (100 + n) * fs.HIT_TIME_TICK_NS and not hits["children"][1]["flag"]
     assert hits["children"][0]["word"] == f"{fs_hit_word(0, n, 10 + n):08x}"
 
-    # F32: the 0x41 payload-port map arrives decoded by the decoder (uint16 entries in memory order, zero entries kept).
+    # The 0x41 payload-port map arrives decoded by the decoder (uint16 entries in memory order, zero entries kept).
     info = client.get(f"/api/files/{file_id}/structure", params={"node": payloads["children"][0]["id"]}).json()
     assert [child["role"] for child in info["children"]] == ["time_slice", "payload_map"]
     assert info["children"][1]["entries"] == [{"port": 1, "module_id": 0, "module": "fADC250"}, {"port": 3, "module_id": 0, "module": "fADC250"},
@@ -220,7 +220,7 @@ def test_second_open_is_a_cache_hit(client, served_root, monkeypatch):
 
 
 def test_stale_cache_entry_is_recomputed_in_place(client, served_root, monkeypatch):
-    """F60: the key leaves the stats version out, so an old entry is overwritten, never orphaned."""
+    """The key leaves the stats version out, so an old entry is overwritten, never orphaned."""
     from pyevio.web.cache import StatsCache, cache_key
 
     path = served_root["root"] / served_root["synthetic"]
@@ -311,7 +311,7 @@ def test_golden_file_opens_with_no_frames(client, served_root):
 
 
 def test_compressed_golden_file_events_come_from_the_record_buffer(client, served_root):
-    """F4: events of an LZ4 record live in the decompressed buffer; the tree and /words?record= read it."""
+    """Events of an LZ4 record live in the decompressed buffer; the tree and /words?record= read it."""
     if not served_root["golden_lz4"]:
         pytest.skip("golden set absent")
     file_id, _ = open_and_wait(client, served_root["golden_lz4"])
@@ -332,7 +332,7 @@ def test_compressed_golden_file_events_come_from_the_record_buffer(client, serve
 
 
 def test_truncated_tail_is_a_file_check(client, served_root):
-    """D4: a final record cut by EOF keeps its complete events and shows up in the checks with byte counts."""
+    """A final record cut by EOF keeps its complete events and shows up in the checks with byte counts."""
     whole = (served_root["root"] / served_root["synthetic"]).read_bytes()
     from pyevio import EvioFile
     with EvioFile(str(served_root["root"] / served_root["synthetic"])) as evio_file:

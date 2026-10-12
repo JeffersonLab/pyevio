@@ -120,7 +120,7 @@ def scan_frames(evio_file: EvioFile, max_records: Optional[int] = None) -> Frame
                 n_other += 1
                 continue
             rows.append((record_i, event_i, words[5], words[6] | (words[7] << 32)))
-    # EvioFile.record_count covers data records only (D12); the trailer is a separate
+    # EvioFile.record_count covers data records only; the trailer is a separate
     # attribute and counts as seen once the scan has covered the whole file.
     if record_limit == evio_file.record_count and evio_file.trailer is not None:
         n_trailers += 1
@@ -301,7 +301,7 @@ def start_worker_services() -> None:
     The resource tracker hands ``sys.stderr.fileno()`` to the process it spawns. A program that
     captures stderr (Textual replaces it with an object whose ``fileno()`` is -1 while the app
     runs) makes that spawn fail with ``ValueError: bad value(s) in fds_to_keep`` on the first
-    pool (F63). Both services start once per process and stay up, so ``pyevio gui`` calls this
+    pool. Both services start once per process and stay up, so ``pyevio gui`` calls this
     before the app starts; ``compute_stream_stats`` calls it too, pointing ``sys.stderr`` at the
     process's original stderr for the few milliseconds the start takes when the current one is
     unusable. Harmless when the services already run.
@@ -350,7 +350,7 @@ def _decode_records(evio_file: EvioFile, record_range, events_before_record: np.
             if record_type(record) == RECORD_TYPE_TRAILER:
                 continue
             # Event offsets point into record.buffer: the mmap for a plain record, the
-            # decompressed bytes for an LZ4/gzip record (F4). Never read them from the mmap.
+            # decompressed bytes for an LZ4/gzip record. Never read them from the mmap.
             buffer = record.buffer
             for offset, length in record.get_event_offsets()[:record.header.event_count]:
                 if offset + length <= len(buffer):
@@ -398,7 +398,7 @@ class StreamStats:
     warnings: int  # malformed SIB segments after the TSS (no hit depends on them)
     warning_messages: List[str]
     frames_with_ais: int  # frames whose SIB holds an aggregation info segment (0x42)
-    frames_with_degenerate_ais: int  # of those, frames whose entries all hold one value (F15)
+    frames_with_degenerate_ais: int  # of those, frames whose entries all hold one value
     checks: FrameChecks
     rocs: np.ndarray
     ports: np.ndarray

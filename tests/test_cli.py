@@ -1,4 +1,4 @@
-"""The pyevio command group: error reporting, --version, no-argument help, offset labels (F47, F50, F51, F52)."""
+"""The pyevio command group: error reporting, --version, no-argument help, offset labels."""
 import os
 
 import pytest
@@ -11,7 +11,7 @@ from test_record_scanning import make_event, make_record, write_file
 GOLDEN_V4_FILE = "/data/evio-lib/golden/cases/cpp/v4_le.evio"
 
 # Every command that opens its file with EvioFile, with the arguments it needs after the
-# file; the group converts the EvioFile error for all of them (F47). Absent on purpose:
+# file; the group converts the EvioFile error for all of them. Absent on purpose:
 # ``hex`` dumps raw bytes of any file, ``gui`` is an interactive textual app, ``web`` takes a directory.
 FILE_COMMANDS = {
     "info": [],
@@ -33,7 +33,7 @@ def run(args):
 @pytest.mark.parametrize("command", sorted(FILE_COMMANDS))
 @pytest.mark.skipif(not os.path.exists(GOLDEN_V4_FILE), reason="golden set not present")
 def test_unsupported_version_is_a_message(command):
-    """An EVIO v4 file ends every command with the version message and exit code 1 (F47)."""
+    """An EVIO v4 file ends every command with the version message and exit code 1."""
     result = run([command, GOLDEN_V4_FILE] + FILE_COMMANDS[command])
     assert result.exit_code == 1
     assert "Error: EVIO version 4 file is not supported" in result.stderr
@@ -42,7 +42,7 @@ def test_unsupported_version_is_a_message(command):
 
 @pytest.mark.parametrize("command", sorted(FILE_COMMANDS))
 def test_non_evio_file_is_a_message(tmp_path, command):
-    """A file without the EVIO magic number ends every command with the message and exit code 1 (F47)."""
+    """A file without the EVIO magic number ends every command with the message and exit code 1."""
     path = tmp_path / "noise.bin"
     path.write_bytes(bytes(range(256)) * 8)
     result = run([command, str(path)] + FILE_COMMANDS[command])
@@ -52,14 +52,14 @@ def test_non_evio_file_is_a_message(tmp_path, command):
 
 
 def test_version_option():
-    """``pyevio --version`` prints the package version (F51)."""
+    """``pyevio --version`` prints the package version."""
     result = run(["--version"])
     assert result.exit_code == 0
     assert pyevio.__version__ in result.output
 
 
 def test_no_arguments_prints_help():
-    """``pyevio`` with no arguments prints the help; the file shortcut is gone (F52)."""
+    """``pyevio`` with no arguments prints the help; the file shortcut is gone."""
     result = run([])
     assert "Usage: " in result.output
     assert "Commands:" in result.output
@@ -67,7 +67,7 @@ def test_no_arguments_prints_help():
 
 
 def test_file_as_first_argument_is_an_unknown_command(tmp_path):
-    """``pyevio FILE`` is rejected as an unknown command (F52, Q26 B)."""
+    """``pyevio FILE`` is rejected as an unknown command."""
     path = write_file(tmp_path / "plain.evio", [make_record(1, [make_event(2)], last=True, with_index=True)])
     result = run([path])
     assert result.exit_code == 2
@@ -85,7 +85,7 @@ NOTE = "LZ4 compressed record: offsets below are in the decompressed record buff
 
 
 def test_event_command_labels_offsets_of_a_compressed_record(tmp_path):
-    """``pyevio event`` on an LZ4 record says its offsets are buffer offsets; a plain record gets no note (F50)."""
+    """``pyevio event`` on an LZ4 record says its offsets are buffer offsets; a plain record gets no note."""
     lz4, plain = compressed_and_plain_files(tmp_path)
 
     result = run(["event", lz4, "1", "--hexdump"])
@@ -102,7 +102,7 @@ def test_event_command_labels_offsets_of_a_compressed_record(tmp_path):
 
 
 def test_debug_command_labels_offsets_of_a_compressed_record(tmp_path):
-    """``pyevio debug`` prints the note once per record (F50)."""
+    """``pyevio debug`` prints the note once per record."""
     lz4, plain = compressed_and_plain_files(tmp_path)
 
     result = run(["debug", lz4, "--record", "0"])
@@ -115,7 +115,7 @@ def test_debug_command_labels_offsets_of_a_compressed_record(tmp_path):
 
 
 def test_event_command_names_the_record_of_a_global_index(tmp_path):
-    """``pyevio event N`` by global index prints the record the event lives in (F53)."""
+    """``pyevio event N`` by global index prints the record the event lives in."""
     _, plain = compressed_and_plain_files(tmp_path)
     result = run(["event", plain, "1", "--hexdump"])
     assert result.exit_code == 0, result.output
@@ -125,7 +125,7 @@ def test_event_command_names_the_record_of_a_global_index(tmp_path):
 
 
 def test_dump_record_out_of_range_is_a_parameter_error(tmp_path):
-    """``pyevio dump --record R`` past the last record exits 2 with the range message (F54)."""
+    """``pyevio dump --record R`` past the last record exits 2 with the range message."""
     _, plain = compressed_and_plain_files(tmp_path)
     result = run(["dump", plain, "--record", "7"])
     assert result.exit_code == 2

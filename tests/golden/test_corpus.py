@@ -26,7 +26,7 @@ What one test checks
 ``EvioFile.record_count`` equals ``records``, the record header event-count
 sum equals ``event_count``, and no event from ``Record.scan_events``
 extends past the end of the file. Rows that fail today carry
-``xfail(strict=True)`` with the finding number.
+``xfail(strict=True)`` with the reason.
 """
 
 import os
@@ -53,9 +53,8 @@ if not os.path.isfile(MANIFEST_PATH):
 with open(MANIFEST_PATH) as manifest_file:
     MANIFEST = yaml.safe_load(manifest_file)
 
-# Failures by compression kind. Empty since PHASE1 fixed F3 (trailer counted
-# as a record; its index read as events) and F4 (LZ4 records walked as
-# uncompressed bytes). A new entry carries the finding number.
+# Failures by compression kind. Empty: every row passes. A new entry maps the
+# compression kind to the reason the row fails.
 XFAIL_BY_COMPRESSION = {}
 
 
