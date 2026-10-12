@@ -48,38 +48,38 @@ All notable changes to pyevio are listed here. The format follows [Keep a Change
 
 ### Fixed
 
-- leaf banks lost their last word: `Bank` counted the length word as part of the declared length, so every `to_numpy()` and child walk stopped one word short.
-- trailer records produced phantom events past the end of the file: the trailer's record index was read as event lengths.
+- Leaf banks lost their last word: `Bank` counted the length word as part of the declared length, so every `to_numpy()` and child walk stopped one word short.
+- Trailer records produced phantom events past the end of the file: the trailer's record index was read as event lengths.
 - LZ4, LZ4_BEST and gzip records were read as uncompressed bytes and produced garbage events.
-- an event or bank length that ran past its record or the file was trusted; corrupt data raised deep inside numpy or struct calls. Every length is checked against its container and an overrun ends the walk with a recorded error.
-- a truncated final record, garbage after the last record, or a second file header (two files concatenated) was accepted as a record. Record headers are validated before use and a problem ends the scan with a `bad_record_header` check.
+- An event or bank length that ran past its record or the file was trusted; corrupt data raised deep inside numpy or struct calls. Every length is checked against its container and an overrun ends the walk with a recorded error.
+- A truncated final record, garbage after the last record, or a second file header (two files concatenated) was accepted as a record. Record headers are validated before use and a problem ends the scan with a `bad_record_header` check.
 - `with EvioFile(...)` leaked the mmap and the file descriptor silently while a numpy view was alive.
-- a dictionary or first event of odd length shifted every event: the user header length is stored padded to whole words.
+- A dictionary or first event of odd length shifted every event: the user header length is stored padded to whole words.
 - v4 and v1—3 files failed with a generic "Unsupported EVIO version" error.
 - HIPO files (file type id `HIPO`) were rejected.
 - `EvioFile.get_event()` raised on every call (a 2-tuple unpacked into four names); `pyevio event` by global index failed with it.
-- children of a bank of segments or tagsegments were read as two-word banks: the first segment word of a streaming frame's stream info bank was taken for a length, and the walk stopped with an entry in `Bank.errors` and no children.
+- Children of a bank of segments or tagsegments were read as two-word banks: the first segment word of a streaming frame's stream info bank was taken for a length, and the walk stopped with an entry in `Bank.errors` and no children.
 - `pyevio event N --record R` looked the event up by global index instead of its index within the record.
 - SRO hardware files (8-word block headers, version word 4, no file header) could not be opened.
-- two bank-scanning tests failed on `main` because their fixtures declared lengths that disagreed with their byte sizes; corrected to EVIO length semantics.
+- Two bank-scanning tests failed on `main` because their fixtures declared lengths that disagreed with their byte sizes; corrected to EVIO length semantics.
 - `uv run` and `pip install` could not build the package: setuptools auto-discovery picked up a second top-level directory as a package.
 - `pyevio debug` printed "Error accessing event" for every event (it called a method `Record` does not have) and skipped every payload bank with two or more hits.
 - `pyevio debug` displayed bank extents one word short.
-- the hit-word layout and the frame walk existed in five copies (viewer, Parquet example, `pyevio debug`, two analysis examples) that had drifted apart; the Parquet example and `pyevio debug` call the shared decoder. The viewer's copy and `examples/analyze_evio_data.py` / `examples/analyze_roc_data2.py` remain.
-- the Parquet example crashed (`IndexError`) when the last ROC bank of a frame had no children or ended in an empty payload bank.
-- the example's `validate()` checked a `uint16` column against 65,536, which could never fail, with `assert`, which `python -O` removes; the raw 14-bit time field is checked and `ValueError` raised.
-- duplicate frame numbers interleaved the hits of both copies in the Parquet output, so the per-frame hit ranges pointed at the wrong rows.
-- every crate was decoded as fADC250, so DCRB channel masks became bogus hits; the module type comes from the payload map.
+- The hit-word layout and the frame walk existed in five copies (viewer, Parquet example, `pyevio debug`, two analysis examples) that had drifted apart; the Parquet example and `pyevio debug` call the shared decoder. The viewer's copy and `examples/analyze_evio_data.py` / `examples/analyze_roc_data2.py` remain.
+- The Parquet example crashed (`IndexError`) when the last ROC bank of a frame had no children or ended in an empty payload bank.
+- The example's `validate()` checked a `uint16` column against 65,536, which could never fail, with `assert`, which `python -O` removes; the raw 14-bit time field is checked and `ValueError` raised.
+- Duplicate frame numbers interleaved the hits of both copies in the Parquet output, so the per-frame hit ranges pointed at the wrong rows.
+- Every crate was decoded as fADC250, so DCRB channel masks became bogus hits; the module type comes from the payload map.
 - Decoder and statistics: fixed caps of 8 ROCs and 64 boards dropped crates silently; each crate sends two ROC banks per frame, so 12 crates make 24. The decoder and `stream_stats` have no caps: histogram axes grow with the data, both streams of a crate merge by ROC id, and the stream identity (ROC bank num mask) is kept per hit. The viewer's own caps remain.
-- empty payload banks (length 1, num 1) and payload data type 0x00 were treated as anomalies.
-- a file of a 4-way striped run reported 3 of every 4 frames missing, and time was computed from frame numbers; the stride is read from the data and time from timestamps.
-- the frame period and the timestamp tick were guessed from `timestamp / frame` of the first frame; the period is the median timestamp step per frame and the tick length is a knob.
+- Empty payload banks (length 1, num 1) and payload data type 0x00 were treated as anomalies.
+- A file of a 4-way striped run reported 3 of every 4 frames missing, and time was computed from frame numbers; the stride is read from the data and time from timestamps.
+- The frame period and the timestamp tick were guessed from `timestamp / frame` of the first frame; the period is the median timestamp step per frame and the tick length is a knob.
 - Rate histograms binned from frame 0 to the last frame, so a later stripe squeezed into the right edge and partial last bins read low; `stream_stats` bins from the first to the last timestamp and normalizes by the frames each bin covers.
-- the Parquet example, `stream_stats` and `pyevio debug` read event bytes from the file mmap, which is wrong for compressed records, and the example kept mmap views past the `with` block.
-- every command printed a traceback for a file pyevio cannot read (an EVIO v4 file, a file without the magic number); the message goes to stderr with exit code 1.
+- The Parquet example, `stream_stats` and `pyevio debug` read event bytes from the file mmap, which is wrong for compressed records, and the example kept mmap views past the `with` block.
+- Every command printed a traceback for a file pyevio cannot read (an EVIO v4 file, a file without the magic number); the message goes to stderr with exit code 1.
 - `pyevio event` and `pyevio debug` printed the offsets of a compressed record as if they were file offsets; a note names them as offsets in the decompressed record buffer, and `pyevio event --hexdump` reads the event from that buffer.
 - `pyevio --version` printed 0.1.0; it prints `pyevio.__version__`.
-- the `pyevio FILE` shortcut for `pyevio info FILE` never ran (click resolves the command name first); the dead branch is removed and `pyevio` with no arguments prints the help.
+- The `pyevio FILE` shortcut for `pyevio info FILE` never ran (click resolves the command name first); the dead branch is removed and `pyevio` with no arguments prints the help.
 - `pyevio event N` by global index printed `Record #None`; it prints the record the event lives in.
 - `pyevio dump --record R` with R out of range printed the message and exited 0; it is a parameter error (exit code 2). The `--hexdump` title of `pyevio event` lost a stray `)`.
 - Files that set the last-record bit on every record showed 1 record and 0 events; the scan continues while another record header follows, and records without an event index are walked by the length word of each event bank.
