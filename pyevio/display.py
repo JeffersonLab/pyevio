@@ -2,6 +2,7 @@
 Display utilities for rendering EVIO structures in a user-friendly way.
 """
 from rich.tree import Tree
+from pyevio.record import Record
 from pyevio.roc_time_slice_bank import RocTimeSliceBank
 
 
@@ -125,3 +126,22 @@ def create_bank_tree(bank, title="Bank Structure"):
     tree = Tree(f"[bold]{title}[/bold]")
     display_bank_tree(tree, bank)
     return tree
+
+
+COMPRESSION_NAMES = {Record.COMPRESSION_LZ4: "LZ4", Record.COMPRESSION_LZ4_BEST: "LZ4_BEST",
+                     Record.COMPRESSION_GZIP: "gzip"}
+
+
+def offset_scope_note(record):
+    """The line that says what the event and bank offsets of ``record`` refer to.
+
+    For a compressed record every event and bank offset is an offset in the
+    decompressed record buffer (see ``Record``), so a reader who takes it for
+    a file offset lands on compressed bytes. Returns ``None`` for an
+    uncompressed record, whose offsets are file offsets.
+    """
+    if record.compression_type == record.COMPRESSION_NONE:
+        return None
+    name = COMPRESSION_NAMES.get(record.compression_type, f"type {record.compression_type}")
+    # Kept under 80 columns so rich prints it on one line in a default terminal.
+    return f"[yellow]{name} compressed record: offsets below are in the decompressed record buffer[/yellow]"

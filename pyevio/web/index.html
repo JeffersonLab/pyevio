@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>pyevio web viewer</title>
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="wrap">
+  <header class="bar">
+    <h1>pyevio viewer</h1>
+    <span class="grow"></span>
+    <button class="btn" id="browseBtn" type="button" aria-expanded="true" aria-controls="browser">Open file</button>
+  </header>
+
+  <section class="browser" id="browser" aria-label="Folder browser">
+    <div class="bh">
+      <button class="btn ghost" id="brUp" type="button" aria-label="Parent folder">↑ Up</button>
+      <span class="path" id="brPath">/</span>
+      <label><input type="checkbox" id="brAll"> all files</label>
+    </div>
+    <div class="blist" id="brList"></div>
+  </section>
+
+  <section class="status" aria-live="polite">
+    <div class="file" id="stFile">No file open</div>
+    <div class="prog" id="prog" hidden><i></i></div>
+    <div class="msg" id="stMsg">Pick a file in the folder browser, or start the server with <code>pyevio web path/to/file</code>. The server reads and analyzes the file; this page shows the result.</div>
+    <div class="err" id="stErr" hidden></div>
+  </section>
+
+  <nav class="tabs" role="tablist" id="tabs">
+    <button class="tab" role="tab" data-tab="overview" aria-selected="true" type="button" disabled>Overview</button>
+    <button class="tab" role="tab" data-tab="plots" aria-selected="false" type="button" disabled>Plots</button>
+    <button class="tab" role="tab" data-tab="records" aria-selected="false" type="button" disabled>Records</button>
+    <button class="tab" role="tab" data-tab="structure" aria-selected="false" type="button" disabled>Structure</button>
+  </nav>
+
+  <section class="view" id="v-overview" hidden>
+    <div class="tiles" id="tiles"></div>
+    <div class="grid2">
+      <section class="panel"><h2>What stands out</h2><ul class="find" id="standout"></ul></section>
+      <section class="panel"><h2>File checks</h2><div class="checks" id="checks"></div></section>
+    </div>
+    <div class="grid2">
+      <section class="panel"><h2>File</h2><table class="fields" id="fileFacts"></table></section>
+      <section class="panel"><h2>Records and frames</h2><table class="fields" id="recordFacts"></table></section>
+    </div>
+    <section class="panel"><h2>ROCs</h2><div class="scroll"><table class="t" id="rocTable"></table></div></section>
+  </section>
+
+  <section class="view" id="v-plots" hidden>
+    <div class="grid2">
+      <section class="panel"><h3>Hits per frame</h3><p id="hpfSub"></p><svg class="chart" id="chartHitsPerFrame"></svg></section>
+      <section class="panel"><h3>Total hit rate over time</h3><p id="rateSub"></p><svg class="chart" id="chartRate"></svg></section>
+    </div>
+    <section class="panel">
+      <h3>Occupancy — hits per ROC and port</h3>
+      <p>Each cell sums the 16 channels of one payload port. Grey cells are ports the 0x41 map does not list for that ROC. Click a cell to select that ROC and port below.</p>
+      <div class="scale" id="occupancyScale"></div>
+      <svg class="chart" id="chartOccupancy"></svg>
+    </section>
+    <section class="panel" id="rocPanel">
+      <div class="controls">
+        <h3>Per ROC</h3>
+        <label>ROC <select id="selRoc"></select></label>
+        <span id="rocInfo"></span>
+      </div>
+      <div class="grid2">
+        <div class="cell"><h3>Port × channel occupancy</h3><span class="sub">hits per channel; click a cell to select the channel</span><svg class="chart" id="chartRocMap"></svg></div>
+        <div class="cell"><h3>Hit rate over time</h3><span class="sub" id="rocRateSub"></span><svg class="chart" id="chartRocRate"></svg></div>
+        <div class="cell"><h3>Charge spectrum</h3><span class="sub">hits per bin, log scale</span><svg class="chart" id="chartRocCharge"></svg></div>
+        <div class="cell"><h3>Hit time within frame</h3><span class="sub">hits per bin</span><svg class="chart" id="chartRocTime"></svg></div>
+      </div>
+    </section>
+    <section class="panel" id="channelPanel">
+      <div class="controls">
+        <h3>Per channel</h3>
+        <label>Port <select id="selPort"></select></label>
+        <label>Channel <select id="selCh"></select></label>
+        <button class="btn ghost" id="chPrev" type="button">‹ Prev</button>
+        <button class="btn ghost" id="chNext" type="button">Next ›</button>
+        <span id="chInfo"></span>
+      </div>
+      <div class="grid3">
+        <div class="cell"><h3>Hit rate over time</h3><svg class="chart" id="chartChRate"></svg></div>
+        <div class="cell"><h3>Charge spectrum</h3><span class="sub">hits per bin, log scale</span><svg class="chart" id="chartChCharge"></svg></div>
+        <div class="cell"><h3>Hit time within frame</h3><span class="sub">hits per bin</span><svg class="chart" id="chartChTime"></svg></div>
+      </div>
+    </section>
+  </section>
+
+  <section class="view" id="v-records" hidden>
+    <section class="panel">
+      <div class="pager">
+        <button class="btn ghost" id="recPrev" type="button">‹ Prev</button>
+        <span id="recPageInfo"></span>
+        <button class="btn ghost" id="recNext" type="button">Next ›</button>
+        <label>Go to record <input type="number" id="recGo" min="0" value="0" style="width:110px"></label>
+        <span class="small">Click a row to open the record in the Structure tab.</span>
+      </div>
+      <div class="scroll"><table class="t" id="recordsTable"></table></div>
+    </section>
+  </section>
+
+  <section class="view" id="v-structure" hidden>
+    <div class="panes">
+      <section class="pane">
+        <div class="pane-h"><span>File → records → events → banks → hits. Expand a node to load its children.</span></div>
+        <div class="tree" id="tree" role="tree" aria-label="EVIO file structure"></div>
+      </section>
+      <section class="pane"><div class="detail" id="detail"><p>Select a node to see its header fields and raw words.</p></div></section>
+    </div>
+  </section>
+</div>
+<div class="tip" id="tip" hidden></div>
+<script type="module" src="app.js"></script>
+</body>
+</html>

@@ -1,31 +1,18 @@
 import click
 from rich.console import Console
-from rich.panel import Panel
-from rich.syntax import Syntax
 from rich import box
 from rich.table import Table
-from rich.tree import Tree
-import struct
-from datetime import datetime
+
+import numpy as np
 
 from pyevio.evio_file import EvioFile
+from pyevio.decoders import fadc250_stream
+from pyevio.display import offset_scope_note
 from pyevio.roc_time_slice_bank import RocTimeSliceBank
-from pyevio.utils import make_hex_dump, print_offset_hex
+from pyevio.utils import print_offset_hex
 
-import click
-from rich.console import Console
-from rich.panel import Panel
-from rich.syntax import Syntax
-from rich import box
-from rich.table import Table
-from rich.tree import Tree
-import struct
-from datetime import datetime
-
-from pyevio.evio_file import EvioFile
-from pyevio.bank import Bank
-from pyevio.roc_time_slice_bank import RocTimeSliceBank
-from pyevio.utils import make_hex_dump, print_offset_hex
+# Hit words printed per payload bank before the output is cut; SRO payload banks hold thousands.
+MAX_HIT_WORDS_SHOWN = 32
 
 
 def display_record_info(console, record_obj, record_index):
@@ -33,6 +20,9 @@ def display_record_info(console, record_obj, record_index):
     console.print(f"[bold cyan]Record #{record_index} Analysis[/bold cyan]")
     console.print(f"[bold]Offset: [green]0x{record_obj.offset:X}[{record_obj.offset//4}][/green], Length: [green]{record_obj.header.record_length}[/green] words[/bold]")
     console.print(f"[bold]Type: [green]{record_obj.header.event_type}[/green], Events: [green]{record_obj.event_count}[/green][/bold]")
+    note = offset_scope_note(record_obj)
+    if note:
+        console.print(note)
 
 
 def display_bank_header(console, bank, title=None):
@@ -120,16 +110,15 @@ def display_child_banks(console, parent_bank, evio_file, verbose, hexdump, level
 
                     # Use print_offset_hex for displaying hex data
                     if hexdump:
-                        print_offset_hex(evio_file.mm, child.offset, min(16, child.length),
+                        print_offset_hex(child.mm, child.offset, min(16, child.length),
                                          f"Child #{i} at offset 0x{child.offset:X}[{child.offset//4}]")
 
                     # Show length details for better debugging
                     console.print(f"[dim]Length: {child.length} words, Data Length: {child.data_length} bytes[/dim]")
-                    console.print(f"[dim]Offset Range: 0x{child.offset:X} - 0x{child.offset + (child.length * 4):X}[/dim]")
+                    # The length word counts the words after it: a bank spans (length + 1) words.
+                    console.print(f"[dim]Offset Range: 0x{child.offset:X} - 0x{child.offset + (child.length + 1) * 4:X}[/dim]")
 
-                    # Check if this is a data bank (length 1 or 2)
-                    if child.length <= 2 and not child.is_container():
-                        # This is likely a data bank
+                    if not child.is_container():
                         display_data_bank(console, child, evio_file, hexdump)
                     # Recurse for container banks
                     elif child.is_container() and level < max_level:
@@ -158,35 +147,29 @@ def display_data_bank(console, bank, evio_file, hexdump=False):
         console.print(f"[bold]Data Bank (Length 1, No Data)[/bold]")
         return
 
-    # Get all data words from the bank
-    data_words = []
-    for i in range(bank.data_offset, bank.data_offset + bank.data_length, 4):
-        if i + 4 <= bank.offset + bank.size:
-            word = struct.unpack(bank.endian + 'I', evio_file.mm[i:i+4])[0]
-            data_words.append(word)
+    # The length word counts the words that follow it, so the payload is (length - 1) words after the 2-word header.
+    data_offset = bank.offset + 8
+    data_end = min(data_offset + 4 * (bank.length - 1), len(bank.mm))
+    data_words = fadc250_stream.event_words(bank.mm, data_offset, max(data_end - data_offset, 0), bank.endian)
 
-    if not data_words:
+    if len(data_words) == 0:
         console.print(f"[bold]Data Bank (No Valid Data)[/bold]")
         return
 
-    # Display data information
     console.print(f"[bold]Data Bank (Data Words: {len(data_words)})[/bold]")
 
-    # Display raw values
-    for i, word in enumerate(data_words):
-        console.print(f"  Word {i}: 0x{word:08X}")
-
-        # Try to interpret FADC hit data
-        chan = (word >> 13) & 0x000F
-        charge = word & 0x1FFF
-        time = ((word >> 17) & 0x3FFF) * 4
-
-        # Display decoded fields
-        console.print(f"    [dim]Channel: {chan}, Charge: {charge}, Time: {time}[/dim]")
+    # Interpret the words as streaming fADC250 hits; the layout lives in the decoder module.
+    shown = data_words[:MAX_HIT_WORDS_SHOWN]
+    channels, times_raw, charges = fadc250_stream.unpack_hit_words(shown)
+    for word_i, (word, chan, time_raw, charge) in enumerate(zip(shown.tolist(), channels, times_raw, charges)):
+        console.print(f"  Word {word_i}: 0x{word:08X}")
+        console.print(f"    [dim]Channel: {chan}, Charge: {charge}, Time: {int(time_raw) * fadc250_stream.HIT_TIME_TICK_NS}[/dim]")
+    if len(data_words) > len(shown):
+        console.print(f"  [dim]... {len(data_words) - len(shown)} more words[/dim]")
 
     # Show hexdump if requested
     if hexdump and bank.data_length > 0:
-        print_offset_hex(evio_file.mm, bank.data_offset, min(bank.data_length // 4, 16),
+        print_offset_hex(bank.mm, bank.data_offset, min(bank.data_length // 4, 16),
                          f"Data Bank at 0x{bank.offset:X}[{bank.offset//4}]")
 
 def display_roc_timeslice_info(console, bank, evio_file, payload_filter=None, hexdump=False):
@@ -264,10 +247,46 @@ def display_roc_timeslice_info(console, bank, evio_file, payload_filter=None, he
 
                     # Show hexdump of waveform data
                     if hexdump:
-                        print_offset_hex(evio_file.mm, payload_bank.data_offset, min(16, payload_bank.data_length//4),
+                        print_offset_hex(payload_bank.mm, payload_bank.data_offset, min(16, payload_bank.data_length//4),
                                          f"Payload {p_idx} Data at 0x{payload_bank.data_offset:X}[{payload_bank.data_offset//4}]")
             except Exception as e:
                 console.print(f"[red]Error analyzing waveform data: {str(e)}[/red]")
+
+
+def display_stream_frame(console, evio_file, event_obj):
+    """Decode a streaming time frame (0xFF60) and show its hits per ROC bank."""
+    words = fadc250_stream.event_words(event_obj.mm, event_obj.offset, event_obj.length, event_obj.endian)
+    frame = fadc250_stream.decode_frame(words)
+    console.print(f"[bold]Streaming time frame {frame.frame_number}[/bold], timestamp {frame.timestamp}, "
+                  f"{frame.n_hits} hits in {frame.n_roc_banks} ROC banks, "
+                  f"{frame.n_payload_banks} payload banks ({frame.n_empty_payload_banks} empty), "
+                  f"{frame.non_fadc_words} words of other modules")
+    for message in frame.error_messages:
+        console.print(f"[red]Decode error: {message}[/red]")
+    for message in frame.warning_messages:
+        console.print(f"[yellow]Decode warning: {message}[/yellow]")
+
+    module_names = {fadc250_stream.MODULE_FADC250: "fADC250", fadc250_stream.MODULE_DCRB: "DCRB",
+                    fadc250_stream.MODULE_UNKNOWN: "unmapped"}
+    roc_table = Table(box=box.SIMPLE)
+    roc_table.add_column("ROC", style="cyan")
+    roc_table.add_column("Stream", style="green")
+    roc_table.add_column("Module", style="white")
+    roc_table.add_column("Payload banks", style="blue")
+    roc_table.add_column("Empty", style="yellow")
+    roc_table.add_column("Hits", style="magenta")
+    roc_table.add_column("Other words", style="magenta")
+    roc_table.add_column("Ports", style="white")
+    for roc_bank in frame.roc_banks:
+        same_bank = lambda table: table[(table["roc"] == roc_bank["roc"]) & (table["stream"] == roc_bank["stream"])]
+        hit_slice = slice(int(roc_bank["first_hit_index"]), int(roc_bank["first_hit_index"] + roc_bank["n_hits"]))
+        ports = sorted(set(frame.port[hit_slice].tolist()) | set(same_bank(frame.empty_banks)["port"].tolist())
+                       | set(same_bank(frame.non_fadc_banks)["port"].tolist()))
+        module_id = int(roc_bank["module_id"])
+        roc_table.add_row(str(roc_bank["roc"]), str(roc_bank["stream"]), module_names.get(module_id, str(module_id)),
+                          str(roc_bank["n_payload_banks"]), str(roc_bank["n_empty_payload_banks"]), str(roc_bank["n_hits"]),
+                          str(roc_bank["non_fadc_words"]), ", ".join(map(str, ports)))
+    console.print(roc_table)
 
 
 def display_event_info(console, evio_file, record_obj, event_idx, payload_filter, hexdump, verbose):
@@ -275,19 +294,22 @@ def display_event_info(console, evio_file, record_obj, event_idx, payload_filter
     console.print(f"[bold yellow]Event #{event_idx}[/bold yellow]")
 
     try:
-        event_obj = record_obj.get_record_and_event(event_idx)
+        event_obj = record_obj.get_event(event_idx)
         console.print(f"[bold]Offset: [green]0x{event_obj.offset:X}[{event_obj.offset//4}][/green], Size: [green]{event_obj.length}[/green] bytes[/bold]")
 
         # Show hexdump if requested
         if hexdump:
             console.print()
-            print_offset_hex(evio_file.mm, event_obj.offset, min(30, event_obj.length//4), f"Event #{event_idx} at 0x{event_obj.offset:X}[{event_obj.offset//4}]")
+            print_offset_hex(event_obj.mm, event_obj.offset, min(30, event_obj.length//4), f"Event #{event_idx} at 0x{event_obj.offset:X}[{event_obj.offset//4}]")
 
 
         # Get bank information
         bank_info = event_obj.get_bank_info()
         if bank_info:
             console.print(f"[bold]Bank Type: {bank_info.get('bank_type', 'Unknown')} (Tag: 0x{bank_info.get('tag', 0):04X})[/bold]")
+
+        if bank_info and bank_info.get("tag") == fadc250_stream.STREAM_EVENT_TAG:
+            display_stream_frame(console, evio_file, event_obj)
 
 
         # Try to parse the event as a bank
@@ -316,7 +338,7 @@ def display_event_info(console, evio_file, record_obj, event_idx, payload_filter
 
                 # Show hexdump of bank data if requested
                 if hexdump:
-                    print_offset_hex(evio_file.mm, bank.data_offset, min(16, bank.data_length//4),
+                    print_offset_hex(bank.mm, bank.data_offset, min(16, bank.data_length//4),
                                      f"Bank Data at 0x{bank.data_offset:X}[{bank.data_offset//4}]")
 
         except Exception as e:

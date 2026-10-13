@@ -182,14 +182,15 @@ def dump_command(ctx, filename, count, start, record, format_as, only, verbose):
     verbose = verbose or ctx.obj.get('VERBOSE', False)
     console = Console()
 
-    try:
-        with EvioFile(filename, verbose) as evio_file:
-            # Validate record if specified
-            if record is not None:
-                if record < 0 or record >= evio_file.record_count:
-                    console.print(f"[red]Record {record} out of range (0-{evio_file.record_count-1})[/red]")
-                    return 1
+    # The open sits outside the catch-all: a file pyevio cannot read raises
+    # ValueError, which the command group reports with exit code 1.
+    with EvioFile(filename, verbose) as evio_file:
+        # Validated before the catch-all below, which would otherwise swallow the click error.
+        if record is not None and (record < 0 or record >= evio_file.record_count):
+            raise click.BadParameter(f"Record {record} out of range (0-{evio_file.record_count-1})")
 
+        try:
+            if record is not None:
                 # If record is specified and start is default (2), adjust to 0
                 if start == 2 and not ctx.params.get("start"):
                     start = 0
@@ -212,8 +213,8 @@ def dump_command(ctx, filename, count, start, record, format_as, only, verbose):
             rendered_output = render_rows(formatted_rows)
             print(rendered_output)
 
-    except Exception as e:
-        console.print(f"[red]Error: {str(e)}[/red]")
-        if verbose:
-            import traceback
-            console.print(traceback.format_exc())
+        except Exception as e:
+            console.print(f"[red]Error: {str(e)}[/red]")
+            if verbose:
+                import traceback
+                console.print(traceback.format_exc())

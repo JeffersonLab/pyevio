@@ -95,8 +95,9 @@ class Event:
             Bank object for this event's root bank
         """
         if self._root_bank is None:
-            # Parse the root bank
-            self._root_bank = Bank.from_buffer(self.mm, self.offset, self.endian)
+            # The root bank may not reach past the event's bytes (its length
+            # word is file data); the event end is the limit.
+            self._root_bank = Bank.from_buffer(self.mm, self.offset, self.endian, self.end_offset)
 
             # For special bank types, return appropriate subclass
             bank_info = self.get_bank_info()
@@ -104,7 +105,7 @@ class Event:
             if bank_info.get("bank_type") == "ROC Time Slice Bank":
                 from pyevio.roc_time_slice_bank import RocTimeSliceBank
                 try:
-                    self._root_bank = RocTimeSliceBank(self.mm, self.offset, self.endian)
+                    self._root_bank = RocTimeSliceBank(self.mm, self.offset, self.endian, self.end_offset)
                 except Exception as e:
                     # If parsing as specialized bank fails, fall back to generic Bank
                     pass

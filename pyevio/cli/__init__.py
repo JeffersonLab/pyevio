@@ -1,7 +1,6 @@
-import os
-import sys
-
 import click
+
+from pyevio import __version__
 
 # Import and register commands
 from pyevio.cli.info import info_command
@@ -10,12 +9,29 @@ from pyevio.cli.debug import debug_command
 from pyevio.cli.record import record_command
 from pyevio.cli.event import event_command
 from pyevio.cli.hex import hex_command
-from pyevio.cli.ui import ui_command
+from pyevio.cli.gui import gui_command
 from pyevio.cli.ana import ana_command
+from pyevio.cli.web import web_command
+from pyevio.cli.stats import stats_command
 
 
-@click.group(invoke_without_command=True)
-@click.version_option(version="0.1.0")
+class EvioCli(click.Group):
+    """The pyevio command group: a file pyevio cannot read ends the command with its message.
+
+    ``EvioFile`` raises ``ValueError`` for a file that is not EVIO or an EVIO
+    version pyevio does not read. Converting it here, once, turns the message
+    into click's ``Error: ...`` on stderr with exit code 1 for every command.
+    """
+
+    def invoke(self, ctx):
+        try:
+            return super().invoke(ctx)
+        except ValueError as error:
+            raise click.ClickException(str(error)) from error
+
+
+@click.group(cls=EvioCli)
+@click.version_option(version=__version__)
 @click.option('--verbose', '-v', is_flag=True, help="Enable verbose output")
 @click.pass_context
 def cli(ctx, verbose):
@@ -23,13 +39,6 @@ def cli(ctx, verbose):
     # Create a context object to pass data between commands
     ctx.ensure_object(dict)
     ctx.obj['VERBOSE'] = verbose
-
-    # If no command was provided, and there are arguments, check if the first one is a file
-    if ctx.invoked_subcommand is None and len(sys.argv) > 1:
-        potential_file = sys.argv[1]
-        if os.path.isfile(potential_file):
-            # Treat this as 'info' command
-            ctx.invoke(info_command, filename=potential_file, verbose=verbose)
 
 
 # Register commands with the CLI
@@ -39,8 +48,10 @@ cli.add_command(debug_command)
 cli.add_command(record_command)
 cli.add_command(event_command)
 cli.add_command(hex_command)
-cli.add_command(ui_command)
+cli.add_command(gui_command)
 cli.add_command(ana_command)
+cli.add_command(web_command)
+cli.add_command(stats_command)
 
 
 # Entry point for the CLI

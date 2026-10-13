@@ -1,0 +1,18 @@
+[package]
+name = "evio-stream"
+version = "0.1.0"
+edition = "2021"
+description = "Streaming, read-only reader for EVIO v6 files and JLab SRO hardware streams"
+license = "MIT"
+publish = false
+
+[dependencies]
+# LZ4 block decompression: records with compression type 1 (LZ4) and 2
+# (LZ4_BEST) hold one LZ4 block without a frame header. Pure Rust, no C
+# toolchain; "safe-decode" keeps the decoder free of unsafe code.
+lz4_flex = { version = "0.11", default-features = false, features = ["std", "safe-decode"] }
+# gzip (and zlib) decompression for records with compression type 3.
+flate2 = "1.1"
+
+# The release profile (debug = 1 for `perf`) is set in the workspace root
+# Cargo.toml, the only place cargo reads profiles from.
