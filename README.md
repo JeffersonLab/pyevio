@@ -177,6 +177,7 @@ pyevio ana run.evio --per-record           # event tag statistics over the file
 pyevio gui run.evio                        # console viewer (Textual), see docs/console_gui.md
 pyevio gui /path/to/runs                   # the same, picking a file from a folder
 pyevio web /path/to/runs                   # browser viewer, see docs/web_viewer.md
+pyevio web run.evio                        # the same, opening this file at once
 ```
 
 ## Development

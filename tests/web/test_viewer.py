@@ -216,3 +216,15 @@ def test_second_open_replaces_the_first(page, served_root):
     show_tab(page, "overview")
     assert page.inner_text(".tile[data-key=n_frames] .v") == "0"
     assert page.inner_text("#stFile") == served_root["golden"]
+
+
+def test_start_file_in_the_url_opens_on_load(browser, server, served_root):
+    """``pyevio web FILE`` puts ?open=FILE in the URL; the page opens it without a click."""
+    page = browser.new_page(viewport={"width": 1280, "height": 900})
+    try:
+        page.goto(f"{server}/?token={TOKEN}&open={served_root['synthetic']}")
+        page.wait_for_selector("body[data-file-id]", timeout=LOAD_TIMEOUT_MS)
+        assert page.inner_text("#stFile") == served_root["synthetic"]
+        assert page.get_attribute("#browser", "hidden") is not None
+    finally:
+        page.close()

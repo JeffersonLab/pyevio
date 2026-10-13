@@ -350,3 +350,11 @@ def test_truncated_tail_is_a_file_check(client, served_root):
     rows = client.get(f"/api/files/{file_id}/records").json()["rows"]
     assert rows[-1]["is_truncated"] and rows[-1]["events_found"] < rows[-1]["event_count"]
     assert summary["totals"]["n_frames"] == summary["records"]["events_found"] - 1  # minus the non-stream event
+
+
+def test_command_line_path_splits_into_root_and_start_file(served_root):
+    """``pyevio web FILE`` serves the file's folder and names the file; a folder is served as is."""
+    from pyevio.web.app import served_root_and_start_file
+    root = served_root["root"]
+    assert served_root_and_start_file(root) == (root.resolve(), None)
+    assert served_root_and_start_file(root / "runs" / "synthetic.evio") == ((root / "runs").resolve(), "synthetic.evio")

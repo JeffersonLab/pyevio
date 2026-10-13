@@ -15,6 +15,8 @@ const $ = id => document.getElementById(id);
 // The token comes from the URL `pyevio web` printed (?token=…) and goes out as the X-Token header on every
 // /api call: static files need none, and API URLs stay free of secrets in logs and bookmarks.
 const TOKEN = new URLSearchParams(location.search).get('token') || '';
+// `pyevio web path/to/file` adds ?open=<file relative to the served folder>; the page opens it on load.
+const START_FILE = new URLSearchParams(location.search).get('open') || '';
 
 class ApiError extends Error {
   constructor(status, message) {
@@ -608,6 +610,7 @@ function init() {
     return;
   }
   guarded(() => browse(''));
+  if (START_FILE) guarded(() => openFile(START_FILE));
 }
 
 init();

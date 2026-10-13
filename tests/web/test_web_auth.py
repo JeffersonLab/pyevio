@@ -47,6 +47,14 @@ def test_asset_route_stays_inside_the_package(client):
     assert client.get("/..%2F..%2Fpyproject.toml").status_code in (403, 404)
 
 
+def test_favicon_is_served_at_both_names(client):
+    """Browsers ask for /favicon.ico before the page names its icon; both answers are the same SVG."""
+    for name in ("/favicon.ico", "/favicon.svg"):
+        response = client.get(name)
+        assert response.status_code == 200 and response.headers["content-type"].startswith("image/svg+xml"), name
+        assert response.content.lstrip().startswith(b"<svg")
+
+
 def test_ls_lists_only_under_root(client, served_root):
     listing = client.get("/api/ls").json()
     assert listing["dir"] == "" and listing["parent"] is None

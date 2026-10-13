@@ -12,7 +12,7 @@ GOLDEN_V4_FILE = "/data/evio-lib/golden/cases/cpp/v4_le.evio"
 
 # Every command that opens its file with EvioFile, with the arguments it needs after the
 # file; the group converts the EvioFile error for all of them. Absent on purpose:
-# ``hex`` dumps raw bytes of any file, ``gui`` is an interactive textual app, ``web`` takes a directory.
+# ``hex`` dumps raw bytes of any file, ``gui`` and ``web`` are interactive viewers that start a loop.
 FILE_COMMANDS = {
     "info": [],
     "dump": [],

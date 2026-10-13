@@ -15,6 +15,7 @@ pip install 'pyevio[web]'
 ```bash
 pyevio web                       # serve the current folder
 pyevio web /path/to/runs         # serve another folder
+pyevio web /path/to/run.evio     # serve the file's folder and open the file at once
 pyevio web /path/to/runs --port 9000 --no-browser --workers 8 --cache-dir /scratch/pyevio-cache
 ```
 

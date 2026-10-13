@@ -7,7 +7,8 @@ uvicorn process count is always 1 because the job registry lives in memory.
 import logging
 import webbrowser
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Tuple
+from urllib.parse import quote
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
@@ -22,6 +23,7 @@ from pyevio.web.routes import router
 log = logging.getLogger("pyevio.web")
 
 STATIC_SUFFIXES = (".html", ".js", ".css", ".svg", ".png", ".ico")
+START_FILE_QUERY_PARAM = "open"  # the page opens this file (relative to the served root) on load; app.js reads it
 
 
 def create_app(root: Path, token: str, cache_dir: Optional[Path] = None, stats_workers: Optional[int] = None) -> FastAPI:
@@ -71,6 +73,11 @@ def create_app(root: Path, token: str, cache_dir: Optional[Path] = None, stats_w
     def index():
         return FileResponse(INDEX_HTML)
 
+    @app.get("/favicon.ico", include_in_schema=False)
+    def favicon():
+        """Browsers ask for /favicon.ico before the page names its icon; serve the SVG there as well."""
+        return FileResponse(WEB_DIR / "favicon.svg", media_type="image/svg+xml")
+
     @app.get("/{asset_name}", include_in_schema=False)
     def asset(asset_name: str):
         """Files beside index.html (scripts, styles); nothing outside the package folder."""
@@ -83,15 +90,32 @@ def create_app(root: Path, token: str, cache_dir: Optional[Path] = None, stats_w
     return app
 
 
-def serve(root: str = ".", port: int = 8765, open_browser: bool = True, cache_dir: Optional[str] = None,
+def served_root_and_start_file(path: Path) -> Tuple[Path, Optional[str]]:
+    """Split the command-line PATH: a folder is served as is; a file's folder is served and the file opens at start.
+
+    Returns the folder to serve and the file name relative to it (``None`` for a folder).
+    """
+    path = Path(path).expanduser().resolve()
+    if path.is_dir():
+        return path, None
+    return path.parent, path.name
+
+
+def serve(path: str = ".", port: int = 8765, open_browser: bool = True, cache_dir: Optional[str] = None,
           workers: Optional[int] = None, verbose: bool = False) -> None:
-    """Serve the viewer on 127.0.0.1 until Ctrl+C; prints the URL that carries the token."""
+    """Serve the viewer on 127.0.0.1 until Ctrl+C; prints the URL that carries the token.
+
+    ``path`` is the folder to serve, or a file: then its folder is served and the page opens the file.
+    """
     import uvicorn
 
     logging.basicConfig(level=logging.DEBUG if verbose else logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
     token = new_token()
-    app = create_app(Path(root), token, Path(cache_dir) if cache_dir else None, workers)
+    root, start_file = served_root_and_start_file(Path(path))
+    app = create_app(root, token, Path(cache_dir) if cache_dir else None, workers)
     url = f"http://127.0.0.1:{port}/?{TOKEN_QUERY_PARAM}={token}"
+    if start_file:
+        url += f"&{START_FILE_QUERY_PARAM}={quote(start_file)}"
     # flush: with stdout redirected to a file (ssh session logs), the URL must appear before uvicorn blocks.
     print(f"pyevio web: {url}\nFiles under: {app.state.root}\nCache: {app.state.registry.cache.directory}\n(Ctrl+C to stop)", flush=True)
     if open_browser:
