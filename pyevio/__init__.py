@@ -13,5 +13,4 @@ from pyevio.roc_time_slice_bank import RocTimeSliceBank, StreamInfoBank, Payload
 from pyevio.utils import make_hex_dump
 
 
-__version__ = "0.2.0"
-
+__version__ = "1.0.0"
